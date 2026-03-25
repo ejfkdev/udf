@@ -1,0 +1,173 @@
+[cmd_short]
+other = "Extract Harbor or docker-save image archives into a merged rootfs"
+
+[help_usage]
+other = "Usage:"
+
+[help_desc]
+other = "Description:"
+
+[help_desc_text]
+other = "Extract Harbor or docker-save image archives into a merged rootfs.\nInput may be a single tar/tar.gz/tgz/zip file, a directory, or a glob pattern. All matched supported archives are processed in order."
+
+[help_flags]
+other = "Flags:"
+
+[help_examples]
+other = "Examples:"
+
+[help_output]
+other = "Output:"
+
+[help_output_text]
+other = "By default, output goes to a same-named directory beside the input file.\nWhen -o/--output is set, a same-named subdirectory is created under that directory.\nIf one archive contains multiple images, an additional subdirectory based on RepoTag or index is created."
+
+[help_notes]
+other = "Notes:"
+
+[help_notes_text]
+other = "Directory input scans only the top level and is not recursive.\nIn batch mode, a failure in one file does not stop the others."
+
+[flag_help]
+other = "Show help information"
+
+[flag_output]
+other = "Output parent directory; a same-named subdirectory will be created. Defaults to the input file's directory"
+
+[flag_image_index]
+other = "Select the image by its index in the manifest.json array, for example 0, 1, or 2. Useful when the archive contains multiple images, though -t is usually easier to use"
+
+[flag_repo_tag]
+other = "Select the image by RepoTag from manifest.json, for example repo/app:latest. This is usually more intuitive than -i and is recommended. If the archive contains multiple images and no selection is provided, available tags will be listed"
+
+[flag_buffer_size]
+other = "Buffer size in bytes used when copying files"
+
+[flag_force]
+other = "Force writing into an existing non-empty target directory without clearing it first"
+
+[flag_no_progress]
+other = "Disable dynamic progress bar"
+
+[flag_lang]
+other = "UI language, supported: zh or en"
+
+[err_selection_conflict]
+other = "use only one image selection option: --image-index/-i or --repo-tag/-t"
+
+[err_invalid_buffer]
+other = "invalid buffer size: {{.Value}}"
+
+[err_no_supported_archive]
+other = "no supported archive files found"
+
+[err_no_image_archive]
+other = "no valid image archives found"
+
+[err_scan_metadata]
+other = "failed to scan image metadata"
+
+[err_prepare_output]
+other = "failed to prepare output directory"
+
+[err_write_config_yaml]
+other = "failed to write config YAML"
+
+[err_init_progress]
+other = "failed to initialize progress bar"
+
+[err_apply_image]
+other = "failed to extract image"
+
+[err_manifest_empty]
+other = "manifest.json is empty"
+
+[err_repo_tag_not_found]
+other = "the specified RepoTag was not found: {{.Tag}}; available values: {{.Available}}"
+
+[err_image_index_out_of_range]
+other = "image index is out of range: {{.Index}}; manifest contains {{.Count}} records"
+
+[err_multiple_images_require_selection]
+other = "this archive contains multiple images; please specify one with -t/--repo-tag or -i/--image-index. Available values: {{.Available}}"
+
+[msg_batch_processed]
+other = "Images processed successfully: {{.Count}}"
+
+[msg_batch_failed]
+other = "Images failed: {{.Count}}"
+
+[msg_batch_skip]
+other = "Skipped non-image archive: {{.Path}} ({{.Error}})"
+
+[msg_batch_fail]
+other = "Failed to process: {{.Path}} ({{.Error}})"
+
+[msg_start_image]
+other = "Processing image: {{.Path}}"
+
+[msg_image_index]
+other = "Image index: {{.Value}}"
+
+[msg_repo_tags]
+other = "Image tags: {{.Value}}"
+
+[msg_config_path]
+other = "Config file: {{.Value}}"
+
+[msg_layer_count]
+other = "Layer count: {{.Value}}"
+
+[msg_workdir]
+other = "Working directory: {{.Value}}"
+
+[msg_entrypoint]
+other = "Entrypoint: {{.Value}}"
+
+[msg_cmd]
+other = "Default command: {{.Value}}"
+
+[msg_output_dir]
+other = "Output directory: {{.Value}}"
+
+[msg_done]
+other = "Extraction completed: {{.Path}}"
+
+[progress_prefix]
+other = "Extracting"
+
+[progress_done]
+other = "Completed"
+
+[example_1]
+other = "./udf ./image.tar"
+
+[example_2]
+other = "./udf ./image.tar.gz"
+
+[example_3]
+other = "./udf ./image.zip"
+
+[example_4]
+other = "./udf ./repo/*.tar"
+
+[example_5]
+other = "./udf './repo/*.{tar,tar.gz,zip}'"
+
+[example_6]
+other = "./udf ./repo"
+
+[example_7]
+other = "./udf -o ./output ./image.tar"
+
+[example_8]
+other = "./udf ./image.tar ./repo/*.tar -o ./output"
+
+[example_9]
+other = "./udf -t repo/app:latest ./image.tar"
+
+[example_10]
+other = "./udf -i 1 ./image.tar"
+
+[example_11]
+other = "./udf -f -o ./output ./image.tar"

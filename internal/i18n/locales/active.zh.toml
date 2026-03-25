@@ -1,0 +1,173 @@
+[cmd_short]
+other = "将 Harbor 或 docker save 导出的镜像包还原为合并后的 rootfs"
+
+[help_usage]
+other = "用法:"
+
+[help_desc]
+other = "说明:"
+
+[help_desc_text]
+other = "将 Harbor 或 docker save 导出的镜像包还原为合并后的 rootfs。\n输入可以是单个 tar/tar.gz/tgz/zip、目录，或通配符模式，程序会顺序处理所有匹配到的支持格式文件。"
+
+[help_flags]
+other = "选项:"
+
+[help_examples]
+other = "示例:"
+
+[help_output]
+other = "输出规则:"
+
+[help_output_text]
+other = "默认输出到输入文件所在目录下的“镜像同名目录”\n指定 -o/--output 时，会在该目录下创建“镜像同名目录”\n如果同一归档中有多个镜像，会继续按 RepoTag 或 index 创建子目录"
+
+[help_notes]
+other = "说明补充:"
+
+[help_notes_text]
+other = "目录输入只扫描当前一层，不递归子目录\n批量模式下，单个文件失败不会中断其他文件处理"
+
+[flag_help]
+other = "显示帮助信息"
+
+[flag_output]
+other = "输出父目录路径，实际会在其下创建同名子目录；默认输出到输入文件所在目录"
+
+[flag_image_index]
+other = "按 manifest.json 数组中的序号选择镜像，例如 0、1、2；当同一归档里有多个镜像时可使用，通常更推荐使用 -t 按 RepoTag 选择"
+
+[flag_repo_tag]
+other = "按 manifest.json 中的 RepoTags 选择镜像，例如 repo/app:latest；比 -i 更直观，推荐优先使用；如果同一归档里有多个镜像且未指定，程序会列出可选 tag"
+
+[flag_buffer_size]
+other = "文件复制时使用的缓冲区大小，单位字节"
+
+[flag_force]
+other = "强制写入已存在的非空目标目录，不预先清空"
+
+[flag_no_progress]
+other = "禁用动态进度条"
+
+[flag_lang]
+other = "界面语言，可选 zh 或 en"
+
+[err_selection_conflict]
+other = "只能使用一个镜像选择参数：--image-index/-i 或 --repo-tag/-t"
+
+[err_invalid_buffer]
+other = "无效的缓冲区大小: {{.Value}}"
+
+[err_no_supported_archive]
+other = "没有找到可处理的归档文件"
+
+[err_no_image_archive]
+other = "没有发现符合镜像格式的归档文件"
+
+[err_scan_metadata]
+other = "扫描镜像元数据失败"
+
+[err_prepare_output]
+other = "准备输出目录失败"
+
+[err_write_config_yaml]
+other = "写入配置 YAML 失败"
+
+[err_init_progress]
+other = "初始化进度条失败"
+
+[err_apply_image]
+other = "解包镜像失败"
+
+[err_manifest_empty]
+other = "manifest.json 为空"
+
+[err_repo_tag_not_found]
+other = "指定的 RepoTag 不存在: {{.Tag}}；可选值: {{.Available}}"
+
+[err_image_index_out_of_range]
+other = "镜像索引超出范围: {{.Index}}；manifest 中共有 {{.Count}} 条记录"
+
+[err_multiple_images_require_selection]
+other = "当前归档中包含多个镜像，请使用 -t/--repo-tag 或 -i/--image-index 指定要提取的镜像；可选值: {{.Available}}"
+
+[msg_batch_processed]
+other = "成功处理镜像: {{.Count}}"
+
+[msg_batch_failed]
+other = "处理失败镜像: {{.Count}}"
+
+[msg_batch_skip]
+other = "跳过非镜像归档: {{.Path}} ({{.Error}})"
+
+[msg_batch_fail]
+other = "处理失败: {{.Path}} ({{.Error}})"
+
+[msg_start_image]
+other = "开始处理镜像: {{.Path}}"
+
+[msg_image_index]
+other = "镜像索引: {{.Value}}"
+
+[msg_repo_tags]
+other = "镜像标签: {{.Value}}"
+
+[msg_config_path]
+other = "配置文件: {{.Value}}"
+
+[msg_layer_count]
+other = "层数量: {{.Value}}"
+
+[msg_workdir]
+other = "工作目录: {{.Value}}"
+
+[msg_entrypoint]
+other = "入口命令: {{.Value}}"
+
+[msg_cmd]
+other = "默认命令: {{.Value}}"
+
+[msg_output_dir]
+other = "输出目录: {{.Value}}"
+
+[msg_done]
+other = "解包完成: {{.Path}}"
+
+[progress_prefix]
+other = "解包"
+
+[progress_done]
+other = "解包完成"
+
+[example_1]
+other = "./udf ./image.tar"
+
+[example_2]
+other = "./udf ./image.tar.gz"
+
+[example_3]
+other = "./udf ./image.zip"
+
+[example_4]
+other = "./udf ./repo/*.tar"
+
+[example_5]
+other = "./udf './repo/*.{tar,tar.gz,zip}'"
+
+[example_6]
+other = "./udf ./repo"
+
+[example_7]
+other = "./udf -o ./output ./image.tar"
+
+[example_8]
+other = "./udf ./image.tar ./repo/*.tar -o ./output"
+
+[example_9]
+other = "./udf -t repo/app:latest ./image.tar"
+
+[example_10]
+other = "./udf -i 1 ./image.tar"
+
+[example_11]
+other = "./udf -f -o ./output ./image.tar"

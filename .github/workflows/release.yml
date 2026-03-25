@@ -1,0 +1,128 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build-${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive_ext: tar.gz
+          - goos: linux
+            goarch: arm64
+            archive_ext: tar.gz
+          - goos: darwin
+            goarch: amd64
+            archive_ext: tar.gz
+          - goos: darwin
+            goarch: arm64
+            archive_ext: tar.gz
+          - goos: windows
+            goarch: amd64
+            archive_ext: zip
+          - goos: windows
+            goarch: arm64
+            archive_ext: zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          bin_name="udf"
+          if [ "${GOOS}" = "windows" ]; then
+            bin_name="udf.exe"
+          fi
+          go build -trimpath -ldflags="-s -w" -o "dist/${bin_name}" .
+
+      - name: Package archive
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME}"
+          archive_base="udf_${version}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          mkdir -p release package
+          cp README.md package/
+          cp README.zh-CN.md package/
+          cp LICENSE package/
+
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            cp dist/udf.exe package/
+            (
+              cd package
+              7z a "../release/${archive_base}.zip" udf.exe README.md README.zh-CN.md LICENSE
+            )
+          else
+            cp dist/udf package/
+            tar -C package -czf "release/${archive_base}.tar.gz" udf README.md README.zh-CN.md LICENSE
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: udf-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: release/*
+          if-no-files-found: error
+
+  release:
+    name: publish-release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          body: |
+            ## Installation
+
+            ### Download a prebuilt binary
+
+            Choose the archive for your platform from the assets below.
+
+            ### Go install
+
+            ```bash
+            go install github.com/${{ github.repository }}@${{ github.ref_name }}
+            ```
+
+            ### Notes
+
+            - Linux and macOS assets are packaged as `.tar.gz`
+            - Windows assets are packaged as `.zip`
+            - Each archive includes `README.md`, `README.zh-CN.md`, and `LICENSE`
