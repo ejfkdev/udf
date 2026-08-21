@@ -6,7 +6,7 @@ import (
 	"path"
 	"strings"
 
-	"udf/internal/fsutil"
+	"github.com/ejfkdev/udf/fsutil"
 )
 
 const opaqueWhiteout = ".wh..wh..opq"

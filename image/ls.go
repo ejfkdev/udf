@@ -1,0 +1,160 @@
+package image
+
+import (
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/ejfkdev/udf/fsview"
+	appi18n "github.com/ejfkdev/udf/i18n"
+	"github.com/ejfkdev/udf/layer"
+	"github.com/ejfkdev/udf/types"
+)
+
+// BuildFileSystem merges all layers of the image into an in-memory tree
+// without writing anything to disk.
+func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.Node, error) {
+	archive, err := openArchive(imageTarPath)
+	if err != nil {
+		return nil, err
+	}
+
+	openLayer := func(layerName string) (io.Reader, func(), error) {
+		rc, _, err := archive.Open(layerName)
+		if err != nil {
+			return nil, func() {}, err
+		}
+		return layer.OpenLayerReader(rc)
+	}
+
+	return fsview.Build(meta.LayerOrder, openLayer)
+}
+
+// FormatListing renders the merged image filesystem at target the way
+// `ls -al` would: one long-format line per entry, plus a total block line
+// for directories. target "" or "/" lists the image root.
+func FormatListing(root *fsview.Node, target string) (string, error) {
+	clean, err := fsview.NormalizePath(target)
+	if err != nil {
+		return "", err
+	}
+
+	shown := root
+	if clean != "" {
+		shown = root.Resolve(clean)
+	}
+	if shown == nil {
+		return "", appi18n.NewError("err_ls_path_not_found", map[string]any{"Path": target}, nil)
+	}
+
+	if shown.Kind != fsview.KindDir {
+		return formatLongLine(shown), nil
+	}
+
+	children := shown.SortedChildren()
+	var b strings.Builder
+	fmt.Fprintf(&b, "total %d\n", totalBlocks(children))
+	for _, child := range children {
+		b.WriteString(formatLongLine(child))
+		b.WriteByte('\n')
+	}
+	return strings.TrimSuffix(b.String(), "\n"), nil
+}
+
+func totalBlocks(children []*fsview.Node) int64 {
+	var blocks int64
+	for _, child := range children {
+		blocks += (child.Size + 511) / 512
+	}
+	return blocks
+}
+
+func formatLongLine(n *fsview.Node) string {
+	size := n.Size
+	if n.Kind == fsview.KindSymlink {
+		size = int64(len(n.Linkname))
+	}
+
+	name := n.Name
+	if n.Kind == fsview.KindSymlink {
+		name = fmt.Sprintf("%s -> %s", n.Name, n.Linkname)
+	}
+
+	owner := n.Uname
+	if owner == "" {
+		owner = strconv.Itoa(n.UID)
+	}
+	group := n.Gname
+	if group == "" {
+		group = strconv.Itoa(n.GID)
+	}
+
+	links := 1
+	if n.Kind == fsview.KindDir {
+		links = len(n.Children) + 2
+	}
+
+	return fmt.Sprintf("%s %3d %-8s %-8s %8d %s %s",
+		modeString(n), links, owner, group, size, formatModTime(n.ModTime), name)
+}
+
+func modeString(n *fsview.Node) string {
+	b := []byte("?---------")
+	switch n.Kind {
+	case fsview.KindDir:
+		b[0] = 'd'
+	case fsview.KindSymlink:
+		b[0] = 'l'
+	case fsview.KindHardlink:
+		b[0] = '-'
+	default:
+		b[0] = '-'
+	}
+
+	perm := "rwxrwxrwx"
+	for i := 0; i < 9; i++ {
+		if n.Mode&(1<<(8-i)) == 0 {
+			b[1+i] = '-'
+		} else {
+			b[1+i] = perm[i]
+		}
+	}
+
+	if n.Mode&0o4000 != 0 {
+		if b[3] == 'x' {
+			b[3] = 's'
+		} else {
+			b[3] = 'S'
+		}
+	}
+	if n.Mode&0o2000 != 0 {
+		if b[6] == 'x' {
+			b[6] = 's'
+		} else {
+			b[6] = 'S'
+		}
+	}
+	if n.Mode&0o1000 != 0 {
+		if b[9] == 'x' {
+			b[9] = 't'
+		} else {
+			b[9] = 'T'
+		}
+	}
+
+	return string(b)
+}
+
+func formatModTime(t time.Time) string {
+	if t.IsZero() {
+		return "Jan  1  1970"
+	}
+	const halfYear = 182 * 24 * time.Hour
+	now := time.Now()
+	if t.Before(now.Add(-halfYear)) || t.After(now.Add(halfYear)) {
+		return t.Format("Jan _2  2006")
+	}
+	return t.Format("Jan _2 15:04")
+}

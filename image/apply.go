@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"udf/internal/fsutil"
-	"udf/internal/layer"
-	"udf/internal/types"
+	"github.com/ejfkdev/udf/fsutil"
+	"github.com/ejfkdev/udf/layer"
+	"github.com/ejfkdev/udf/types"
 )
 
 type ProgressReporter interface {

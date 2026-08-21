@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	appi18n "udf/internal/i18n"
-	"udf/internal/types"
+	appi18n "github.com/ejfkdev/udf/i18n"
+	"github.com/ejfkdev/udf/types"
 )
 
 func TestScanImageMetadataSelectsByRepoTag(t *testing.T) {

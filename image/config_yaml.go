@@ -10,7 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"udf/internal/types"
+	"github.com/ejfkdev/udf/types"
 )
 
 func WriteConfigYAML(outputDir string, meta *types.ImageMetadata) error {

@@ -13,6 +13,9 @@ other = "Extract Harbor or docker-save image archives into a merged rootfs.\nInp
 [help_flags]
 other = "Flags:"
 
+[help_commands]
+other = "Commands:"
+
 [help_examples]
 other = "Examples:"
 
@@ -171,3 +174,54 @@ other = "./udf -i 1 ./image.tar"
 
 [example_11]
 other = "./udf -f -o ./output ./image.tar"
+
+[cmd_ls_short]
+other = "List contents of the merged image rootfs without extracting files to disk"
+
+[cmd_cp_short]
+other = "Extract a single file or directory from the image without unpacking the whole image"
+
+[err_ls_failed]
+other = "failed to list image contents"
+
+[err_cp_failed]
+other = "failed to extract entries"
+
+[err_cp_src_not_found]
+other = "source path not found in image: {{.Path}}"
+
+[err_cp_dest_conflict]
+other = "destination exists and is not a directory, cannot extract a directory there: {{.Path}}"
+
+[err_ls_path_not_found]
+other = "path not found in image: {{.Path}}"
+
+[msg_ls_archive]
+other = "Image contents: {{.Path}}"
+
+[msg_cp_done]
+other = "Extracted {{.Count}} entries to: {{.Path}}"
+
+[example_ls_1]
+other = "./udf ls ./image.tar"
+
+[example_ls_2]
+other = "./udf ls ./image.tar /etc"
+
+[example_ls_3]
+other = "./udf ls -t repo/app:latest ./image.tar /usr/local/bin"
+
+[example_ls_4]
+other = "./udf ls ./image.tar /etc/passwd"
+
+[example_cp_1]
+other = "./udf cp ./image.tar /etc/passwd ./passwd"
+
+[example_cp_2]
+other = "./udf cp ./image.tar /etc/nginx ./nginx"
+
+[example_cp_3]
+other = "./udf cp -t repo/app:latest ./image.tar /app/config ./config"
+
+[example_cp_4]
+other = "./udf cp ./image.tar / ./rootfs"

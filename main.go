@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,9 +12,9 @@ import (
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 
-	appi18n "udf/internal/i18n"
-	"udf/internal/image"
-	"udf/internal/types"
+	appi18n "github.com/ejfkdev/udf/i18n"
+	"github.com/ejfkdev/udf/image"
+	"github.com/ejfkdev/udf/types"
 )
 
 type cliOptions struct {
@@ -61,8 +62,7 @@ func newRootCommand(tr *appi18n.Manager) *cobra.Command {
 		helpFlag.Usage = tr.T("flag_help", nil)
 	}
 	cmd.Flags().StringVarP(&opts.outputParent, "output", "o", "", tr.T("flag_output", nil))
-	cmd.Flags().IntVarP(&opts.imageIndex, "image-index", "i", -1, tr.T("flag_image_index", nil))
-	cmd.Flags().StringVarP(&opts.repoTag, "repo-tag", "t", "", tr.T("flag_repo_tag", nil))
+	addImageSelectionFlags(cmd, tr, &opts)
 	cmd.Flags().IntVarP(&opts.bufferSize, "buffer-size", "b", 1<<20, tr.T("flag_buffer_size", nil))
 	cmd.Flags().BoolVarP(&opts.force, "force", "f", false, tr.T("flag_force", nil))
 	cmd.Flags().BoolVar(&opts.noProgress, "no-progress", false, tr.T("flag_no_progress", nil))
@@ -82,12 +82,157 @@ func newRootCommand(tr *appi18n.Manager) *cobra.Command {
 		tr.T("example_11", nil),
 	}, "\n")
 
+	cmd.AddCommand(newLsCommand(tr), newCpCommand(tr))
+
 	return cmd
 }
 
-func run(tr *appi18n.Manager, opts cliOptions, inputs []string) error {
+func addImageSelectionFlags(cmd *cobra.Command, tr *appi18n.Manager, opts *cliOptions) {
+	cmd.Flags().IntVarP(&opts.imageIndex, "image-index", "i", opts.imageIndex, tr.T("flag_image_index", nil))
+	cmd.Flags().StringVarP(&opts.repoTag, "repo-tag", "t", opts.repoTag, tr.T("flag_repo_tag", nil))
+}
+
+func validateSelection(opts cliOptions) error {
 	if opts.repoTag != "" && opts.imageIndex >= 0 {
 		return appi18n.NewError("err_selection_conflict", nil, nil)
+	}
+	return nil
+}
+
+func newLsCommand(tr *appi18n.Manager) *cobra.Command {
+	opts := cliOptions{
+		imageIndex: -1,
+		lang:       tr.Lang(),
+	}
+
+	cmd := &cobra.Command{
+		Use:           "ls [options] <archive> [path]",
+		Short:         tr.T("cmd_ls_short", nil),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runLs(tr, opts, args)
+		},
+	}
+
+	cmd.SetHelpTemplate(renderSubHelpTemplate(tr))
+	cmd.InitDefaultHelpFlag()
+	cmd.Flags().SetInterspersed(true)
+	addImageSelectionFlags(cmd, tr, &opts)
+	cmd.Flags().StringVar(&opts.lang, "lang", opts.lang, tr.T("flag_lang", nil))
+	cmd.Example = strings.Join([]string{
+		tr.T("example_ls_1", nil),
+		tr.T("example_ls_2", nil),
+		tr.T("example_ls_3", nil),
+		tr.T("example_ls_4", nil),
+	}, "\n")
+
+	return cmd
+}
+
+func runLs(tr *appi18n.Manager, opts cliOptions, args []string) error {
+	if err := validateSelection(opts); err != nil {
+		return err
+	}
+
+	meta, err := image.ScanImageMetadata(args[0], image.Selection{
+		ImageIndex: opts.imageIndex,
+		RepoTag:    opts.repoTag,
+	})
+	if err != nil {
+		return appi18n.NewError("err_scan_metadata", nil, err)
+	}
+
+	tree, err := image.BuildFileSystem(args[0], meta)
+	if err != nil {
+		return appi18n.NewError("err_ls_failed", nil, err)
+	}
+
+	target := ""
+	if len(args) == 2 {
+		target = args[1]
+	}
+	out, err := image.FormatListing(tree, target)
+	if err != nil {
+		var le *appi18n.LocalizedError
+		if errors.As(err, &le) {
+			return le
+		}
+		return appi18n.NewError("err_ls_failed", nil, err)
+	}
+
+	fmt.Println(tr.T("msg_ls_archive", map[string]any{"Path": args[0]}))
+	fmt.Println(out)
+	return nil
+}
+
+func newCpCommand(tr *appi18n.Manager) *cobra.Command {
+	opts := cliOptions{
+		imageIndex: -1,
+		bufferSize: 1 << 20,
+		lang:       tr.Lang(),
+	}
+
+	cmd := &cobra.Command{
+		Use:           "cp [options] <archive> <src-path> <dest>",
+		Short:         tr.T("cmd_cp_short", nil),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.ExactArgs(3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCp(tr, opts, args)
+		},
+	}
+
+	cmd.SetHelpTemplate(renderSubHelpTemplate(tr))
+	cmd.InitDefaultHelpFlag()
+	cmd.Flags().SetInterspersed(true)
+	addImageSelectionFlags(cmd, tr, &opts)
+	cmd.Flags().IntVarP(&opts.bufferSize, "buffer-size", "b", opts.bufferSize, tr.T("flag_buffer_size", nil))
+	cmd.Flags().StringVar(&opts.lang, "lang", opts.lang, tr.T("flag_lang", nil))
+	cmd.Example = strings.Join([]string{
+		tr.T("example_cp_1", nil),
+		tr.T("example_cp_2", nil),
+		tr.T("example_cp_3", nil),
+		tr.T("example_cp_4", nil),
+	}, "\n")
+
+	return cmd
+}
+
+func runCp(tr *appi18n.Manager, opts cliOptions, args []string) error {
+	if err := validateSelection(opts); err != nil {
+		return err
+	}
+	if opts.bufferSize <= 0 {
+		return appi18n.NewError("err_invalid_buffer", map[string]any{"Value": opts.bufferSize}, nil)
+	}
+
+	meta, err := image.ScanImageMetadata(args[0], image.Selection{
+		ImageIndex: opts.imageIndex,
+		RepoTag:    opts.repoTag,
+	})
+	if err != nil {
+		return appi18n.NewError("err_scan_metadata", nil, err)
+	}
+
+	count, err := image.ExtractPath(args[0], meta, args[1], args[2], opts.bufferSize)
+	if err != nil {
+		var le *appi18n.LocalizedError
+		if errors.As(err, &le) {
+			return le
+		}
+		return appi18n.NewError("err_cp_failed", nil, err)
+	}
+
+	fmt.Println(tr.T("msg_cp_done", map[string]any{"Count": count, "Path": args[2]}))
+	return nil
+}
+
+func run(tr *appi18n.Manager, opts cliOptions, inputs []string) error {
+	if err := validateSelection(opts); err != nil {
+		return err
 	}
 	if opts.bufferSize <= 0 {
 		return appi18n.NewError("err_invalid_buffer", map[string]any{"Value": opts.bufferSize}, nil)
@@ -412,6 +557,9 @@ func renderHelpTemplate(tr *appi18n.Manager) string {
   %s
 
 %s
+{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}{{rpad .Name .NamePadding }} {{.Short}}
+{{end}}{{end}}
+%s
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
 
 %s
@@ -426,11 +574,28 @@ func renderHelpTemplate(tr *appi18n.Manager) string {
 		tr.T("help_usage", nil),
 		tr.T("help_desc", nil),
 		strings.ReplaceAll(tr.T("help_desc_text", nil), "\n", "\n  "),
+		tr.T("help_commands", nil),
 		tr.T("help_flags", nil),
 		tr.T("help_examples", nil),
 		tr.T("help_output", nil),
 		strings.ReplaceAll(tr.T("help_output_text", nil), "\n", "\n  "),
 		tr.T("help_notes", nil),
 		strings.ReplaceAll(tr.T("help_notes_text", nil), "\n", "\n  "),
+	)
+}
+
+func renderSubHelpTemplate(tr *appi18n.Manager) string {
+	return fmt.Sprintf(`%s
+  {{.UseLine}}
+
+%s
+{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
+
+%s
+{{.Example}}
+`,
+		tr.T("help_usage", nil),
+		tr.T("help_flags", nil),
+		tr.T("help_examples", nil),
 	)
 }

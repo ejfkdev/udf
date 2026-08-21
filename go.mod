@@ -1,4 +1,4 @@
-module udf
+module github.com/ejfkdev/udf
 
 go 1.26.1
 

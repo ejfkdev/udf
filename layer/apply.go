@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"io"
 
-	"udf/internal/fsutil"
+	"github.com/ejfkdev/udf/fsutil"
 )
 
 func ApplyLayer(r io.Reader, outputDir string, buf []byte) ([]fsutil.DirMetadata, error) {
-	layerReader, closeFn, err := openLayerReader(r)
+	layerReader, closeFn, err := OpenLayerReader(r)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func ApplyLayer(r io.Reader, outputDir string, buf []byte) ([]fsutil.DirMetadata
 	}
 }
 
-func openLayerReader(r io.Reader) (io.Reader, func(), error) {
+func OpenLayerReader(r io.Reader) (io.Reader, func(), error) {
 	br := bufio.NewReader(r)
 	header, err := br.Peek(6)
 	if err != nil && err != io.EOF {
