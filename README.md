@@ -1,31 +1,60 @@
 # udf
 
+[![license](https://img.shields.io/github/license/ejfkdev/udf)](./LICENSE)
+[![release](https://github.com/ejfkdev/udf/actions/workflows/release.yml/badge.svg)](https://github.com/ejfkdev/udf/actions/workflows/release.yml)
+
 `udf` is a Go CLI tool that extracts Harbor / Docker image archives into a merged root filesystem (`rootfs`).
 
-It is designed for offline image analysis and large archive handling, with support for multiple archive formats, layered filesystem merging, whiteout processing, and bilingual CLI output.
+It is designed for offline image analysis and large archive handling: multiple archive formats, layered filesystem merging, whiteout processing, listing without extraction, selective extraction, and a bilingual CLI.
 
 中文说明见 [README.zh-CN.md](./README.zh-CN.md).
 
+## Table of Contents
+
+- [Features](#features)
+- [Why](#why)
+- [Installation](#installation)
+- [Usage](#usage)
+- [Input Modes](#input-modes)
+- [Subcommands](#subcommands)
+- [Output Rules](#output-rules)
+- [Options](#options)
+- [Multi-image Archives](#multi-image-archives)
+- [Generated Files](#generated-files)
+- [Error Handling](#error-handling)
+- [Technical Notes](#technical-notes)
+- [Known Limitations](#known-limitations)
+- [Use as a Library](#use-as-a-library)
+- [Current Scope](#current-scope)
+- [License](#license)
+
 ## Features
 
+Input and formats:
+
 - Extract image archives into a merged `rootfs`
-- Support input as a single file, directory, or glob pattern
-- Support outer archive formats:
-  - `.tar`
-  - `.tar.gz`
-  - `.tgz`
-  - `.zip`
-- Support common image archive layouts:
-  - flat `manifest.json + config.json + layers/...`
-  - classic `docker save` layout with `<layer-id>/layer.tar`
-- Correctly apply image layers in `manifest.json` order
-- Handle whiteout files and opaque directories
-- Support symlinks and hardlinks
+- Input as a single file, a directory, or a glob pattern
+- Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.zip`
+- Common image layouts: flat `manifest.json + config.json + layers/...` and classic `docker save` (`<layer-id>/layer.tar`)
+
+Extraction correctness:
+
+- Layers merged in `manifest.json` order
+- Whiteout files and opaque directories handled
+- Symlinks and hardlinks supported
 - Fallback to file copy when the target filesystem does not support hardlinks
+- Directory metadata restored after extraction
+
+Inspection:
+
+- List merged contents without extracting (`udf ls`, output like `ls -al`)
+- Extract a single file or directory only (`udf cp`)
+
+Convenience:
+
 - Export `config.json` as readable `config.yaml`
-- Bilingual CLI and help output:
-  - Chinese
-  - English
+- Bilingual (Chinese / English) CLI and help output
+- Importable as a Go library
 
 ## Why
 
@@ -39,16 +68,24 @@ This tool is useful when you need to:
 
 ## Installation
 
+### Install with Homebrew (macOS)
+
+```bash
+brew install ejfkdev/tap/udf
+```
+
+The formula lives in the [`homebrew-udf`](https://github.com/ejfkdev/homebrew-udf) tap and packages the binaries published by this repository's release workflow.
+
 ### Install with `go install`
 
 ```bash
-go install github.com/ejfdkev/udf@latest
+go install github.com/ejfkdev/udf@latest
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/ejfdkev/udf.git
+git clone https://github.com/ejfkdev/udf.git
 cd udf
 go build -o udf .
 ```
@@ -93,6 +130,56 @@ Examples:
 ```
 
 Directory input only scans the top level and is not recursive.
+
+## Subcommands
+
+### `ls` — list image contents without extracting
+
+`udf ls` builds the merged filesystem view in memory and prints it the way
+`ls -al` would, without writing a single file to disk.
+
+```bash
+./udf ls ./image.tar                # list the image root
+./udf ls ./image.tar /etc           # list a directory inside the image
+./udf ls ./image.tar /etc/passwd    # show one file
+./udf ls -t repo/app:latest ./image.tar /usr/local/bin
+```
+
+Example output:
+
+```text
+$ ./udf ls ./image.tar /etc
+Image contents: ./image.tar
+total 2
+-rw-r--r--   1 root      root           30 Sep 13  2020 passwd
+lrwxrwxrwx   1 root      root           19 Sep 13  2020 resolv.conf -> /run/systemd/resolve
+```
+
+Details:
+
+- Layers are merged with the same whiteout and opaque-directory semantics as the full extract
+- Long format shows permissions, link count, owner, group, size, mtime and name; symlinks display their target
+- Leading `/` in the path is optional; `/` or `.` lists the image root
+- Use `-t` / `-i` to select an image in a multi-image archive
+
+### `cp` — extract a single file or directory
+
+`udf cp` streams only the entries that belong to the selection, still
+respecting the merged view, so you never have to unpack the whole image.
+
+```bash
+./udf cp ./image.tar /etc/passwd ./passwd
+./udf cp ./image.tar /etc/nginx ./nginx
+./udf cp ./image.tar / ./rootfs
+```
+
+Destination semantics mirror `cp`:
+
+- Directory source into an existing directory lands at `<dest>/<basename>`
+- Directory source into a non-existent path copies into that path directly
+- File or symlink source goes to `<dest>` as a file, or into `<dest>/<basename>` when `<dest>` is an existing directory
+- Extracting `/` (the image root) puts the contents directly into `<dest>`
+- Whiteout-processed entries are skipped, symlinks are recreated as symlinks, and hardlinks are preserved when the source stays inside the selection (content is copied otherwise)
 
 ## Output Rules
 
@@ -147,6 +234,8 @@ output: /data/demo/bundle/repo_app_1.0
 - `--no-progress`
   - Disable the dynamic progress bar
 
+The `ls` and `cp` subcommands share `-t` and `-i` (plus `-b` for `cp`); their `--lang` flag has no `-l` shorthand.
+
 ## Multi-image Archives
 
 If an archive contains only one image:
@@ -155,9 +244,9 @@ If an archive contains only one image:
 
 If an archive contains multiple images:
 
-- `udf` requires a selection
+- a selection is required; `udf` is not interactive — without `-t` or `-i` it exits with an error whose message lists the available options
 - you should usually use `-t`
-- if you do not specify one, the tool will show the available values and ask you to select one
+- pick a value from the error message and re-run with `-t` or `-i`
 
 `-t` and `-i` do not mean the same thing:
 
@@ -177,6 +266,7 @@ For each extracted image, `udf` writes:
 
 - In batch mode, one failed archive does not stop the others
 - Non-image archives are skipped in batch mode
+- Exit codes: `0` when at least one image was processed successfully (even if others failed in batch mode), `1` when nothing could be processed
 - Project-generated user-facing messages support both Chinese and English
 - Low-level system errors are preserved as-is for diagnostics
 
@@ -184,9 +274,65 @@ For each extracted image, `udf` writes:
 
 - Layer application follows `manifest.json`
 - Whiteout files are handled during extraction
-- Some Harbor exports store inner layers as compressed streams; `udf` detects and handles common cases
+- Inner layer streams are auto-detected: gzip, bzip2 and uncompressed tar are supported
 - Directory metadata is restored after extraction to avoid intermediate permission issues
 - Memory usage is kept low by streaming layer extraction instead of unpacking all layers to disk first
+
+## Known Limitations
+
+- zstd-compressed inner layers are not supported and fail with an explicit error
+- Directory input only scans the top level and is not recursive
+- Multi-image archives require an explicit `-t`/`-i` selection; `udf` never prompts interactively
+
+## Use as a Library
+
+Everything is importable as a Go library — no code lives under `internal/`:
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/ejfkdev/udf/image"
+)
+
+func main() {
+	meta, err := image.ScanImageMetadata("./app.tar", image.Selection{RepoTag: "demo/app:latest"})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Print /etc the way `ls -al` would, without extracting anything.
+	tree, err := image.BuildFileSystem("./app.tar", meta)
+	if err != nil {
+		log.Fatal(err)
+	}
+	listing, err := image.FormatListing(tree, "/etc")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(listing)
+
+	// Extract a single file out of the image.
+	if _, err := image.ExtractPath("./app.tar", meta, "/etc/passwd", "./passwd", 1<<20); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+Public packages:
+
+- `github.com/ejfkdev/udf/image` — high level: metadata scanning, merged file system view, listing, selective and full extraction
+- `github.com/ejfkdev/udf/fsview` — whiteout-aware in-memory merged filesystem tree
+- `github.com/ejfkdev/udf/layer` — single layer application and compressed stream detection
+- `github.com/ejfkdev/udf/fsutil` — escape-safe path resolution and file writing helpers
+- `github.com/ejfkdev/udf/types` — shared data structures
+- `github.com/ejfkdev/udf/i18n` — bilingual message bundles
+
+Selection and not-found errors implement `*i18n.LocalizedError` with a stable
+`.Key` you can match on; `Error()` renders readable English by default.
 
 ## Current Scope
 
@@ -194,6 +340,8 @@ Supported:
 
 - offline image archive extraction
 - batch processing
+- listing merged image contents without extracting (`ls`)
+- extracting a single file or directory (`cp`)
 - bilingual CLI
 - config YAML export
 
