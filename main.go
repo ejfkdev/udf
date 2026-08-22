@@ -13,20 +13,12 @@ import (
 //	go build -ldflags "-X main.version=v0.2.0"
 var version = "dev"
 
-// helpSummary is the short description shown at the top of the root help.
-const helpSummary = "将 Harbor / docker save 导出的镜像归档解包为合并后的 rootfs；一个二进制提供 CLI、HTTP REST、MCP 三种接口，所有输入都是本机文件路径，不做上传"
-
 // helpRepoURL is the project home shown in the root help.
 const helpRepoURL = "https://github.com/ejfkdev/udf"
 
-// extractHelpAfter is appended to `udf extract -h`: extract is the default
-// subcommand, and the forwarding rule prefers flags after the archive path.
-const extractHelpAfter = `extract 是默认命令，可省略子命令：
-  udf ./image.tar         等同  udf extract ./image.tar
-省略写法下 flag 请放在路径之后（udf ./image.tar -o out）；需要 flag 前置时使用显式写法（udf extract -o out ./image.tar）。`
-
 func main() {
 	xyz.Version = version
+	lang := effectiveLang()
 
 	reg := registry.New()
 	register(reg, "info", "Show image archive metadata", infoImage,
@@ -42,14 +34,16 @@ func main() {
 		xyz.HTTPHints{Method: "POST", Path: "/cp"},
 		[]string{"write"})
 	register(reg, "extract", "Extract the merged rootfs of one or more image archives", extractImages,
-		xyz.CliHints{Usage: "extract <archive...>", Default: true, After: extractHelpAfter},
+		xyz.CliHints{Usage: "extract <archive...>", Default: true, After: helpTextFor(lang).extractAfter},
 		xyz.HTTPHints{Method: "POST", Path: "/extract"},
 		[]string{"write"})
 
 	cfg := xyz.Config{
+		// 界面语言与派发器保持一致（--xyz.lang 旗标优先于环境检测）。
+		Lang: lang.String(),
 		// 总览开头：程序名、描述、版本号、仓库地址与示例；结尾：内置选项清单。
-		HelpBefore: helpBeforeBlock(),
-		HelpAfter:  helpOptionsBlock,
+		HelpBefore: helpBeforeBlock(lang),
+		HelpAfter:  helpTextFor(lang).options,
 	}
 	os.Exit(xyz.RunConfig(reg, os.Args[1:], cfg))
 }

@@ -266,7 +266,7 @@ Command flags:
 - `-f, --force` — write into an existing non-empty target directory (`extract`)
 - `-b, --buffer-size` — file copy buffer size in bytes (`cp`, `extract`)
 
-Built-in flags come from xyz-go: `-h/--help`, `-v/--version`, `--json`, and `completion bash|zsh|fish`. The `serve` and `mcp` modes add `--addr`, `--bearer`, `--cors`, `--tls-cert`/`--tls-key`, `--timeout`, `--log-level` (plus `--versions` and `--session-timeout` for `mcp`) — details in the [xyz-go README](https://github.com/ejfkdev/xyz-go).
+Built-in flags come from xyz-go: `-h/--help`, `-v/--version`, `--json`, `--xyz.lang en|zh-CN` (interface language, defaults to `LANG`/`LC_ALL` detection), and `completion bash|zsh|fish`. The `serve` and `mcp` modes add `--addr`, `--bearer`, `--cors`, `--tls-cert`/`--tls-key`, `--timeout`, `--log-level` (plus `--versions` and `--session-timeout` for `mcp`) — details in the [xyz-go README](https://github.com/ejfkdev/xyz-go).
 
 ## Multi-image Archives
 
@@ -317,7 +317,7 @@ Batch `extract` keeps going after one archive fails: failures land in the row's 
 - Directory input only scans the top level and is not recursive
 - Multi-image archives require an explicit `-t`/`-i` selection; `udf` never prompts interactively
 - One input expression per command; use a directory or a glob for batches
-- CLI/HTTP/MCP messages are English; the Go library errors still carry stable i18n keys
+- The interface language follows `LANG`/`LC_ALL`, override with `--xyz.lang en|zh-CN`; the Go library errors still carry stable i18n keys
 
 ## Use as a Library
 

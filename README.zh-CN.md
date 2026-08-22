@@ -266,7 +266,7 @@ archive      output_dir                     layers  error
 - `-f, --force` — 强制写入已存在的非空目标目录（`extract`）
 - `-b, --buffer-size` — 文件复制缓冲区大小，单位字节（`cp`、`extract`）
 
-内建参数来自 xyz-go：`-h/--help`、`-v/--version`、`--json` 与 `completion bash|zsh|fish`。`serve` 与 `mcp` 模式额外支持 `--addr`、`--bearer`、`--cors`、`--tls-cert`/`--tls-key`、`--timeout`、`--log-level`（`mcp` 另有 `--versions` 与 `--session-timeout`）——详见 [xyz-go README](https://github.com/ejfkdev/xyz-go)。
+内建参数来自 xyz-go：`-h/--help`、`-v/--version`、`--json`、`--xyz.lang en|zh-CN`（界面语言，默认跟随 `LANG`/`LC_ALL` 自动检测）与 `completion bash|zsh|fish`。`serve` 与 `mcp` 模式额外支持 `--addr`、`--bearer`、`--cors`、`--tls-cert`/`--tls-key`、`--timeout`、`--log-level`（`mcp` 另有 `--versions` 与 `--session-timeout`）——详见 [xyz-go README](https://github.com/ejfkdev/xyz-go)。
 
 ## 多镜像归档说明
 
@@ -317,7 +317,7 @@ archive      output_dir                     layers  error
 - 目录输入只扫描当前一层，不递归子目录
 - 多镜像归档必须显式指定 `-t` / `-i`，程序不会交互式询问
 - 每个命令接收一个输入表达式；批量请使用目录或通配符
-- CLI/HTTP/MCP 消息为英文；Go 库的错误仍携带稳定的 i18n key
+- 界面语言跟随 `LANG`/`LC_ALL` 自动检测，可用 `--xyz.lang en|zh-CN` 覆盖；Go 库的错误仍携带稳定的 i18n key
 
 ## 作为库使用
 

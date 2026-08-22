@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	errs "github.com/ejfkdev/xyz-go/errors"
+	"github.com/ejfkdev/xyz-go/langx"
 
 	"github.com/ejfkdev/udf/i18n"
 	"github.com/ejfkdev/udf/types"
@@ -251,9 +252,10 @@ func TestToXyzErrMapsLocalizedKeys(t *testing.T) {
 }
 
 func TestHelpBlocksCarryMetaInfo(t *testing.T) {
-	before := helpBeforeBlock()
+	zh := helpTextFor(langx.ZhCn)
+	before := helpBeforeBlock(langx.ZhCn)
 	for _, want := range []string{
-		helpSummary,
+		zh.summary,
 		"版本: " + version,
 		helpRepoURL,
 		"示例:",
@@ -263,19 +265,55 @@ func TestHelpBlocksCarryMetaInfo(t *testing.T) {
 		"udf mcp stdio",
 	} {
 		if !strings.Contains(before, want) {
-			t.Errorf("help Before block missing %q:\n%s", want, before)
+			t.Errorf("zh help Before block missing %q:\n%s", want, before)
+		}
+	}
+	for _, want := range []string{"-h, --help", "-v, --version", "--json", "completion", "--bearer", "--versions", "--xyz.lang"} {
+		if !strings.Contains(zh.options, want) {
+			t.Errorf("zh help After block missing %q:\n%s", want, zh.options)
+		}
+	}
+	for _, want := range []string{"默认命令", "flag 请放在路径之后"} {
+		if !strings.Contains(zh.extractAfter, want) {
+			t.Errorf("zh extract help After block missing %q:\n%s", want, zh.extractAfter)
 		}
 	}
 
-	for _, want := range []string{"-h, --help", "-v, --version", "--json", "completion", "--bearer", "--versions"} {
-		if !strings.Contains(helpOptionsBlock, want) {
-			t.Errorf("help After block missing %q:\n%s", want, helpOptionsBlock)
+	en := helpTextFor(langx.En)
+	before = helpBeforeBlock(langx.En)
+	for _, want := range []string{
+		en.summary,
+		"Version: " + version,
+		"Repository: " + helpRepoURL,
+		"Examples:",
+		"show image metadata",
+	} {
+		if !strings.Contains(before, want) {
+			t.Errorf("en help Before block missing %q:\n%s", want, before)
 		}
 	}
-
-	for _, want := range []string{"默认命令", "udf ./image.tar", "flag 请放在路径之后"} {
-		if !strings.Contains(extractHelpAfter, want) {
-			t.Errorf("extract help After block missing %q:\n%s", want, extractHelpAfter)
+	for _, want := range []string{"Built-in options:", "interface language", "--xyz.lang"} {
+		if !strings.Contains(en.options, want) {
+			t.Errorf("en help After block missing %q:\n%s", want, en.options)
 		}
+	}
+	for _, want := range []string{"extract is the default command", "put flags after the archive path"} {
+		if !strings.Contains(en.extractAfter, want) {
+			t.Errorf("en extract help After block missing %q:\n%s", want, en.extractAfter)
+		}
+	}
+}
+
+func TestEffectiveLangDetectsEnvironment(t *testing.T) {
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	t.Setenv("LC_ALL", "")
+	if got := effectiveLang(); got != langx.ZhCn {
+		t.Fatalf("effectiveLang with zh LANG = %v, want zh-CN", got)
+	}
+
+	t.Setenv("LANG", "")
+	t.Setenv("LC_ALL", "C")
+	if got := effectiveLang(); got != langx.En {
+		t.Fatalf("effectiveLang with C locale = %v, want en", got)
 	}
 }
