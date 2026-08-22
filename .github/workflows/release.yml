@@ -62,7 +62,7 @@ jobs:
           if [ "${GOOS}" = "windows" ]; then
             bin_name="udf.exe"
           fi
-          go build -trimpath -ldflags="-s -w" -o "dist/${bin_name}" .
+          go build -trimpath -ldflags="-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/${bin_name}" .
 
       - name: Package archive
         shell: bash

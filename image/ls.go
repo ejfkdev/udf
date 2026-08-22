@@ -147,6 +147,79 @@ func modeString(n *fsview.Node) string {
 	return string(b)
 }
 
+// FileEntry is a structured description of one entry in the merged image
+// filesystem — the machine-friendly counterpart of a FormatListing line.
+type FileEntry struct {
+	Name    string    `json:"name"`
+	Type    string    `json:"type"`
+	Mode    string    `json:"mode"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"mod_time"`
+	Target  string    `json:"target,omitempty"`
+}
+
+// ListEntries resolves target inside the merged tree and returns every entry
+// to display: the sorted children when target is a directory (or the image
+// root), the entry itself otherwise.
+func ListEntries(root *fsview.Node, target string) ([]FileEntry, error) {
+	clean, err := fsview.NormalizePath(target)
+	if err != nil {
+		return nil, err
+	}
+
+	shown := root
+	if clean != "" {
+		shown = root.Resolve(clean)
+	}
+	if shown == nil {
+		return nil, appi18n.NewError("err_ls_path_not_found", map[string]any{"Path": target}, nil)
+	}
+
+	if shown.Kind != fsview.KindDir {
+		return []FileEntry{newFileEntry(shown)}, nil
+	}
+
+	children := shown.SortedChildren()
+	out := make([]FileEntry, 0, len(children))
+	for _, child := range children {
+		out = append(out, newFileEntry(child))
+	}
+	return out, nil
+}
+
+func newFileEntry(n *fsview.Node) FileEntry {
+	size := n.Size
+	if n.Kind == fsview.KindSymlink {
+		size = int64(len(n.Linkname))
+	}
+	entry := FileEntry{
+		Name:    n.Name,
+		Type:    kindName(n.Kind),
+		Mode:    modeString(n),
+		Size:    size,
+		ModTime: n.ModTime,
+	}
+	if n.Kind == fsview.KindSymlink {
+		entry.Target = n.Linkname
+	}
+	return entry
+}
+
+func kindName(kind fsview.Kind) string {
+	switch kind {
+	case fsview.KindDir:
+		return "dir"
+	case fsview.KindFile:
+		return "file"
+	case fsview.KindSymlink:
+		return "symlink"
+	case fsview.KindHardlink:
+		return "hardlink"
+	default:
+		return "unknown"
+	}
+}
+
 func formatModTime(t time.Time) string {
 	if t.IsZero() {
 		return "Jan  1  1970"

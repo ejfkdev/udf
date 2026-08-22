@@ -5,16 +5,16 @@
 
 `udf` 是一个 Go 编写的命令行工具，用于将 Harbor / Docker 导出的镜像归档解包为合并后的根文件系统（`rootfs`）。
 
-它适合离线镜像分析、大体积镜像包处理以及批量解包场景，支持多种归档格式、分层文件系统合并、whiteout 处理、不解压目录列表、选择性提取和中英双语命令行输出，并可作为 Go 库引用。
+一个二进制提供三种接口：每个命令只定义一次（基于 [xyz-go](https://github.com/ejfkdev/xyz-go)），自动同时具备 **CLI 子命令**、**HTTP REST 路由**（自带 OpenAPI 文档）和 **MCP 工具**三种形态。所有输入都是**运行 udf 的机器上的本地文件路径**——不涉及文件上传，操作始终发生在程序所在的机器上。
 
 English version: [README.md](./README.md)
 
 ## 目录
 
 - [功能特性](#功能特性)
-- [适用场景](#适用场景)
+- [三种接口](#三种接口)
 - [安装](#安装)
-- [基本用法](#基本用法)
+- [CLI 用法](#cli-用法)
 - [输入方式](#输入方式)
 - [子命令](#子命令)
 - [输出规则](#输出规则)
@@ -30,12 +30,18 @@ English version: [README.md](./README.md)
 
 ## 功能特性
 
-输入与格式：
+三种接口，一次定义：
+
+- CLI 子命令、HTTP REST 服务（含 `/openapi.json`）与 MCP 工具服务器，由同一组命令定义自动生成
+- 本地路径语义：`archive` / `dest` 是运行 udf 的主机上的路径，不做文件上传
+- 网络模式内置 Bearer 鉴权、TLS 与 CORS
+
+归档处理：
 
 - 将镜像归档解包为合并后的 `rootfs`
-- 支持单文件、目录、通配符三种输入方式
 - 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.zip`
 - 支持常见镜像归档结构：平铺结构 `manifest.json + config.json + layers/...` 与经典 `docker save` 结构 `<layer-id>/layer.tar`
+- 输入可以是单个归档、通配符模式或目录（只扫描一层）
 
 合并正确性：
 
@@ -47,24 +53,43 @@ English version: [README.md](./README.md)
 
 查看与选择：
 
-- 不解压即可列出镜像合并后的目录内容（`udf ls`，输出类似 `ls -al`）
+- 不解压即可列出镜像目录内容（`udf ls`，CLI 表格与结构化 JSON 同源）
 - 不解包整个镜像即可单独提取某个文件或目录（`udf cp`）
+- 查看镜像元数据：标签、层、工作目录、入口命令（`udf info`）
 
 其他：
 
 - 将原始 `config.json` 导出为可读性更高的 `config.yaml`
-- 支持中英双语帮助信息和运行时提示
+- 一套错误分类同时映射 CLI 退出码、HTTP 状态码与 MCP 错误码
 - 可作为 Go 库引用
 
-## 适用场景
+## 三种接口
 
-适合以下用途：
+```bash
+# CLI
+./udf ls ./image.tar /etc
 
-- 不运行 Docker，直接离线查看镜像内容
-- 分析 Harbor 导出的镜像包
-- 查看业务文件、依赖文件和运行时布局
-- 低内存处理大体积镜像包
-- 批量解包某个目录下的多个镜像归档
+# HTTP —— 所有注册命令在同一个端口上提供路由
+./udf serve --addr 127.0.0.1:8080
+curl -s 'http://127.0.0.1:8080/ls?archive=/data/image.tar&path=/etc'
+curl -s -X POST 'http://127.0.0.1:8080/cp' -H 'Content-Type: application/json' \
+  -d '{"archive":"/data/image.tar","source":"/etc/passwd","dest":"/tmp/passwd"}'
+curl -s http://127.0.0.1:8080/openapi.json
+
+# MCP —— 命令即工具（stdio / SSE / streamable HTTP）
+./udf mcp stdio
+./udf mcp http --addr 127.0.0.1:9000 --bearer s3cret
+```
+
+路由一览：`GET /info?archive=…`、`GET /ls?archive=…&path=…`、`POST /cp`、`POST /extract`，另有 `/healthz` 与 `/openapi.json`。
+
+在 MCP 客户端中，将 udf 注册为 stdio 服务：
+
+```json
+{"command": "udf", "args": ["mcp", "stdio"]}
+```
+
+> **安全提示：**所有路径参数都指向运行 udf 的机器。把 `serve` 或 `mcp http/sse` 暴露到回环地址之外，意味着调用方可以读写服务端的本地文件。请用 `--bearer`、TLS（`--tls-cert`/`--tls-key`）和 CORS 白名单保护这些模式——详见 [xyz-go](https://github.com/ejfkdev/xyz-go) 的内置配置。
 
 ## 安装
 
@@ -90,80 +115,92 @@ cd udf
 go build -o udf .
 ```
 
-## 基本用法
+## CLI 用法
 
 ```bash
-./udf [选项] <归档文件|目录|通配符>...
+./udf <命令> [参数]
 ```
 
 示例：
 
 ```bash
-./udf ./image.tar
-./udf ./image.tar.gz
-./udf ./image.zip
-./udf ./repo
-./udf "./repo/*.tar"
-./udf -o ./output ./image.tar
-./udf -t repo/app:latest ./image.tar
-./udf -i 1 ./image.tar
-./udf -f ./image.tar
-./udf --lang zh ./image.tar
+./udf info ./image.tar
+./udf ls ./image.tar /etc
+./udf cp ./image.tar /etc/passwd ./passwd
+./udf extract ./image.tar
+./udf extract -o ./output -t repo/app:latest './repo/*.tar'
+./udf serve --addr 127.0.0.1:8080
+./udf mcp stdio
 ```
+
+`extract` 是默认命令，老用法依然有效：
+
+```bash
+./udf ./image.tar                    # 等同于: ./udf extract ./image.tar
+./udf './repo/*.tar' -o ./output -t repo/app:latest
+```
+
+使用省略写法的 flag 要放在路径之后；需要 flag 前置时请显式写子命令（`./udf extract -o ./out ./image.tar`）。
+
+内建便利项：每个命令可用 `-h` 查看帮助、`-v` 查看版本、`--json` 输出机器可读结果，以及 `completion bash|zsh|fish` 补全脚本。
 
 ## 输入方式
 
-支持以下输入：
+每个命令接收**一个输入表达式**作为归档：
 
-- 单个归档文件
-- 一个目录
-- 一个通配符模式
-- 一次传入多个输入项
+- 单个归档文件——`info`、`ls`、`cp` 要求此形式
+- 通配符模式或目录（只扫描一层，不递归）——`extract` 额外支持，并展开为批量处理
 
 示例：
 
 ```bash
-./udf ./image.tar
-./udf ./images
-./udf "./images/*.tar"
-./udf ./a.tar ./b.tar.gz "./repo/*.zip"
+./udf extract ./images
+./udf extract './images/*.tar'
+./udf ls ./image.tar /etc
 ```
-
-目录输入只扫描当前一层，不递归子目录。
 
 ## 子命令
 
-### `ls` — 不解压列出镜像目录内容
-
-`udf ls` 在内存中构建合并后的文件系统视图，并按 `ls -al` 的方式输出，整个过程不会向磁盘写入任何文件。
+### `info` — 查看镜像元数据
 
 ```bash
-./udf ls ./image.tar                # 列出镜像根目录
-./udf ls ./image.tar /etc           # 列出镜像内的某个目录
-./udf ls ./image.tar /etc/passwd    # 查看单个文件
-./udf ls -t repo/app:latest ./image.tar /usr/local/bin
+./udf info ./image.tar
 ```
 
-示例输出：
+```text
+index         0
+total_images  1
+repo_tags     [demo/app:latest]
+config_path   config.json
+architecture  amd64
+working_dir   /app
+layers        [layer1.tar layer2.tar]
+```
+
+### `ls` — 不解压列出目录内容
+
+`udf ls` 在内存中构建合并后的文件系统视图，以 `ls -al` 信息呈现，不向磁盘写入任何文件。CLI 输出对齐表格，HTTP/MCP 返回同源的结构化 JSON。
+
+```bash
+./udf ls ./image.tar          # 镜像根目录
+./udf ls ./image.tar /etc     # 某个目录
+```
 
 ```text
-$ ./udf ls ./image.tar /etc
-镜像内容: ./image.tar
-total 2
--rw-r--r--   1 root      root           30 Sep 13  2020 passwd
-lrwxrwxrwx   1 root      root           19 Sep 13  2020 resolv.conf -> /run/systemd/resolve
+name    type  mode        size  mod_time                    target
+------  ----  ----------  ----  --------------------------  ------
+group   file  -rw-r--r--  10    2026-08-22T00:04:25+08:00
+passwd  file  -rw-r--r--  30    2026-08-22T00:04:25+08:00
 ```
 
 说明：
 
 - 层的合并与完整解包完全一致，包含 whiteout 和 opaque 目录语义
-- 长格式包含权限、链接数、属主、属组、大小、修改时间和名称；软链接会显示指向目标
+- 列包含类型（`dir|file|symlink|hardlink`）、权限、大小、修改时间与软链接目标
 - 路径前导 `/` 可省略；`/` 或 `.` 表示镜像根目录
-- 多镜像归档可使用 `-t` / `-i` 选择镜像
+- 传入文件路径时只列出该条目本身
 
 ### `cp` — 单独提取某个文件或目录
-
-`udf cp` 只流式提取选中范围内的条目，同样遵循合并后的最终视图，无需解包整个镜像。
 
 ```bash
 ./udf cp ./image.tar /etc/passwd ./passwd
@@ -179,17 +216,25 @@ lrwxrwxrwx   1 root      root           19 Sep 13  2020 resolv.conf -> /run/syst
 - 提取 `/`（镜像根）时，内容直接放入目标路径
 - 被 whiteout 删除的条目会被跳过；软链接原样重建；源在选择范围内的硬链接会保留为硬链接，否则复制内容
 
+### `extract` — 解包合并后的 rootfs
+
+```bash
+./udf extract ./image.tar
+./udf ./image.tar                     # extract 是默认命令，可省略
+./udf extract -o ./output -f -t repo/app:latest './repo/*.tar'
+```
+
+`extract` 把输入表达式展开为一个或多个归档并按序处理，每个归档对应一行结果（CLI 为表格，HTTP/MCP 为 JSON 数组）；单个归档失败只记录在对应行的 `error` 列，不会中断其余归档：
+
+```text
+archive      output_dir                     layers  error
+-----------  -----------------------------  ------  -----
+./image.tar  /tmp/out/image                 2
+```
+
 ## 输出规则
 
-如果不指定 `-o/--output`：
-
-- 默认输出到输入文件所在目录
-
-如果指定 `-o/--output`：
-
-- 输出到指定父目录下
-
-输出目录结构：
+`extract` 不指定 `-o/--output` 时输出到各输入归档所在目录，指定时输出到给定父目录下：
 
 - 单镜像归档：
   - `{file_name}/`
@@ -213,26 +258,15 @@ lrwxrwxrwx   1 root      root           19 Sep 13  2020 resolv.conf -> /run/syst
 
 ## 参数说明
 
-- `-o, --output`
-  - 输出父目录
-  - 实际会在其下创建一个同名子目录
-  - 默认是输入文件所在目录
-- `-f, --force`
-  - 强制写入已存在的非空目标目录
-  - 不会预先清空目录
-- `-t, --repo-tag`
-  - 按 `manifest.json` 中的 `RepoTags` 选择镜像
-  - 一个归档里有多个镜像时，推荐优先使用
-- `-i, --image-index`
-  - 按 `manifest.json` 数组中的索引选择镜像
-- `-b, --buffer-size`
-  - 文件复制缓冲区大小，单位字节
-- `-l, --lang`
-  - 界面语言：`zh` 或 `en`
-- `--no-progress`
-  - 禁用动态进度条
+命令级参数：
 
-`ls` 和 `cp` 子命令共用 `-t`、`-i`（`cp` 另有 `-b`）；子命令的 `--lang` 不带 `-l` 简写。
+- `-t, --repo-tag` — 按 `manifest.json` 中的 `RepoTags` 选择镜像（`info`、`ls`、`cp`、`extract` 均可用）
+- `-i, --image-index` — 按 `manifest.json` 数组中的索引选择镜像（同上）
+- `-o, --output` — 输出父目录（`extract`）
+- `-f, --force` — 强制写入已存在的非空目标目录（`extract`）
+- `-b, --buffer-size` — 文件复制缓冲区大小，单位字节（`cp`、`extract`）
+
+内建参数来自 xyz-go：`-h/--help`、`-v/--version`、`--json` 与 `completion bash|zsh|fish`。`serve` 与 `mcp` 模式额外支持 `--addr`、`--bearer`、`--cors`、`--tls-cert`/`--tls-key`、`--timeout`、`--log-level`（`mcp` 另有 `--versions` 与 `--session-timeout`）——详见 [xyz-go README](https://github.com/ejfkdev/xyz-go)。
 
 ## 多镜像归档说明
 
@@ -243,13 +277,7 @@ lrwxrwxrwx   1 root      root           19 Sep 13  2020 resolv.conf -> /run/syst
 如果一个归档里有多个镜像：
 
 - 必须指定提取哪一个；程序不做交互——未指定时会直接报错退出，错误信息中会列出可选值
-- 通常建议使用 `-t`
 - 从错误信息中选定一个值后，带上 `-t` 或 `-i` 重新运行
-
-`-t` 和 `-i` 的区别：
-
-- `-t` 是按 tag 选
-- `-i` 是按 `manifest.json` 中的位置选
 
 ## 生成文件
 
@@ -262,11 +290,18 @@ lrwxrwxrwx   1 root      root           19 Sep 13  2020 resolv.conf -> /run/syst
 
 ## 错误处理
 
-- 批量模式下，单个归档失败不会中断其他归档
-- 批量模式下，非镜像归档会自动跳过
-- 退出码：至少一个镜像处理成功时返回 0（即使批量模式中其他镜像失败），一个都没成功时返回 1
-- 项目自身产生的用户可见提示支持中英文
-- 系统底层错误会原样保留，便于排查问题
+同一套错误分类贯通三种接口：
+
+| 分类 | CLI 退出码 | HTTP 状态码 | MCP 错误码 |
+|---|---|---|---|
+| 参数无效 | 2 | 400 | -32602 |
+| 不存在 | 1 | 404 | -32001 |
+| 冲突 | 1 | 409 | -32009 |
+| 未授权 / 禁止 | 1 | 401 / 403 | -32010 / -32011 |
+| 依赖不可用 | 1 | 503 | -32603 |
+| 内部错误 | 1 | 500 | -32603 |
+
+批量 `extract` 中单个归档失败不会中断：失败记录在对应行的 `error` 列，只有全部失败时命令本身才报错。系统底层错误会原样保留，便于排查问题。
 
 ## 技术说明
 
@@ -281,10 +316,12 @@ lrwxrwxrwx   1 root      root           19 Sep 13  2020 resolv.conf -> /run/syst
 - 不支持 zstd 压缩的层（会明确报错）
 - 目录输入只扫描当前一层，不递归子目录
 - 多镜像归档必须显式指定 `-t` / `-i`，程序不会交互式询问
+- 每个命令接收一个输入表达式；批量请使用目录或通配符
+- CLI/HTTP/MCP 消息为英文；Go 库的错误仍携带稳定的 i18n key
 
 ## 作为库使用
 
-所有代码都可以作为 Go 库引用，不存在 `internal/` 目录：
+所有代码都可以作为 Go 库引用：
 
 ```go
 package main
@@ -313,6 +350,13 @@ func main() {
 	}
 	fmt.Println(listing)
 
+	// 同一视图的结构化数据。
+	entries, err := image.ListEntries(tree, "/etc")
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = entries
+
 	// 从镜像中单独提取一个文件。
 	if _, err := image.ExtractPath("./app.tar", meta, "/etc/passwd", "./passwd", 1<<20); err != nil {
 		log.Fatal(err)
@@ -336,12 +380,11 @@ func main() {
 
 当前支持：
 
-- 离线镜像归档解包
-- 批量处理
-- 不解压列出镜像目录内容（`ls`）
-- 单独提取文件或目录（`cp`）
-- 中英双语 CLI
+- 离线镜像归档解包，目录/通配符批量
+- 不解压列出镜像目录内容（`ls`）、单独提取文件或目录（`cp`）、元数据查看（`info`）
+- 一个二进制、三种接口：CLI、HTTP（REST + OpenAPI）、MCP 工具
 - `config.yaml` 导出
+- 可作为 Go 库引用
 
 当前不定位为：
 

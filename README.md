@@ -5,16 +5,16 @@
 
 `udf` is a Go CLI tool that extracts Harbor / Docker image archives into a merged root filesystem (`rootfs`).
 
-It is designed for offline image analysis and large archive handling: multiple archive formats, layered filesystem merging, whiteout processing, listing without extraction, selective extraction, and a bilingual CLI.
+One binary speaks two faces: a traditional CLI and a networked agent. Every command is defined once ([xyz-go](https://github.com/ejfkdev/xyz-go)) and automatically available as a **CLI subcommand**, an **HTTP REST route** (with an OpenAPI document) and an **MCP tool**. All inputs are **local file paths on the machine running udf** — nothing is uploaded; the operation always happens where the program runs.
 
 中文说明见 [README.zh-CN.md](./README.zh-CN.md).
 
 ## Table of Contents
 
 - [Features](#features)
-- [Why](#why)
+- [Interfaces](#interfaces)
 - [Installation](#installation)
-- [Usage](#usage)
+- [CLI Usage](#cli-usage)
 - [Input Modes](#input-modes)
 - [Subcommands](#subcommands)
 - [Output Rules](#output-rules)
@@ -30,12 +30,18 @@ It is designed for offline image analysis and large archive handling: multiple a
 
 ## Features
 
-Input and formats:
+Three interfaces, one definition:
+
+- CLI subcommands, an HTTP REST service (`/openapi.json` included) and an MCP tool server, generated from the same command definitions
+- Local-path semantics: `archive` / `dest` are paths on the host running udf; no file uploads
+- Bearer-auth, TLS and CORS built in for the network modes
+
+Archive handling:
 
 - Extract image archives into a merged `rootfs`
-- Input as a single file, a directory, or a glob pattern
 - Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.zip`
 - Common image layouts: flat `manifest.json + config.json + layers/...` and classic `docker save` (`<layer-id>/layer.tar`)
+- Input may be a single archive, a glob pattern, or a directory (top level scanned)
 
 Extraction correctness:
 
@@ -47,24 +53,43 @@ Extraction correctness:
 
 Inspection:
 
-- List merged contents without extracting (`udf ls`, output like `ls -al`)
+- List merged contents without extracting (`udf ls`, `ls -al`-style information both as a CLI table and as structured JSON)
 - Extract a single file or directory only (`udf cp`)
+- Show image metadata: tags, layers, working dir, entrypoint (`udf info`)
 
 Convenience:
 
 - Export `config.json` as readable `config.yaml`
-- Bilingual (Chinese / English) CLI and help output
+- One error taxonomy: CLI exit code, HTTP status and MCP error code stay aligned
 - Importable as a Go library
 
-## Why
+## Interfaces
 
-This tool is useful when you need to:
+```bash
+# CLI
+./udf ls ./image.tar /etc
 
-- inspect container files offline without running Docker
-- extract image contents from Harbor-exported archives
-- analyze application files and runtime layout
-- process large image archives with low memory usage
-- batch-extract multiple image archives from a directory
+# HTTP — every routed command answers on the same port
+./udf serve --addr 127.0.0.1:8080
+curl -s 'http://127.0.0.1:8080/ls?archive=/data/image.tar&path=/etc'
+curl -s -X POST 'http://127.0.0.1:8080/cp' -H 'Content-Type: application/json' \
+  -d '{"archive":"/data/image.tar","source":"/etc/passwd","dest":"/tmp/passwd"}'
+curl -s http://127.0.0.1:8080/openapi.json
+
+# MCP — commands become tools (stdio / SSE / streamable HTTP)
+./udf mcp stdio
+./udf mcp http --addr 127.0.0.1:9000 --bearer s3cret
+```
+
+Route overview: `GET /info?archive=…`, `GET /ls?archive=…&path=…`, `POST /cp`, `POST /extract`, plus `/healthz` and `/openapi.json`.
+
+In MCP clients, register udf as a stdio server:
+
+```json
+{"command": "udf", "args": ["mcp", "stdio"]}
+```
+
+> **Security:** every path argument refers to the machine that runs udf. When you expose `serve` or `mcp http/sse` beyond the loopback interface, that means callers can read and write server-local files. Protect those modes with `--bearer`, TLS (`--tls-cert`/`--tls-key`) and CORS allowlists — see the [xyz-go](https://github.com/ejfkdev/xyz-go) built-in configuration.
 
 ## Installation
 
@@ -90,82 +115,92 @@ cd udf
 go build -o udf .
 ```
 
-## Usage
+## CLI Usage
 
 ```bash
-./udf [options] <archive|directory|glob>...
+./udf <command> [arguments]
 ```
 
 Examples:
 
 ```bash
-./udf ./image.tar
-./udf ./image.tar.gz
-./udf ./image.zip
-./udf ./repo
-./udf "./repo/*.tar"
-./udf -o ./output ./image.tar
-./udf -t repo/app:latest ./image.tar
-./udf -i 1 ./image.tar
-./udf -f ./image.tar
-./udf --lang en ./image.tar
+./udf info ./image.tar
+./udf ls ./image.tar /etc
+./udf cp ./image.tar /etc/passwd ./passwd
+./udf extract ./image.tar
+./udf extract -o ./output -t repo/app:latest './repo/*.tar'
+./udf serve --addr 127.0.0.1:8080
+./udf mcp stdio
 ```
+
+`extract` is the default command, so the classic invocation keeps working:
+
+```bash
+./udf ./image.tar                    # same as: ./udf extract ./image.tar
+./udf './repo/*.tar' -o ./output -t repo/app:latest
+```
+
+When using the shorthand form, put flags after the archive path; to lead with flags, name the subcommand explicitly (`./udf extract -o ./out ./image.tar`).
+
+Built-in conveniences: `-h` per-command help, `-v` version, `--json` for machine-readable CLI output, and `completion bash|zsh|fish`.
 
 ## Input Modes
 
-You can pass:
+Every command takes **one input expression** for the archive:
 
-- a single archive file
-- a directory
-- a glob pattern
-- multiple inputs in one command
+- a single archive file — required by `info`, `ls` and `cp`
+- a glob pattern, or a directory (top level scanned, not recursive) — `extract` also accepts these and expands them into a batch
 
 Examples:
 
 ```bash
-./udf ./image.tar
-./udf ./images
-./udf "./images/*.tar"
-./udf ./a.tar ./b.tar.gz "./repo/*.zip"
+./udf extract ./images
+./udf extract './images/*.tar'
+./udf ls ./image.tar /etc
 ```
-
-Directory input only scans the top level and is not recursive.
 
 ## Subcommands
 
-### `ls` — list image contents without extracting
-
-`udf ls` builds the merged filesystem view in memory and prints it the way
-`ls -al` would, without writing a single file to disk.
+### `info` — image archive metadata
 
 ```bash
-./udf ls ./image.tar                # list the image root
-./udf ls ./image.tar /etc           # list a directory inside the image
-./udf ls ./image.tar /etc/passwd    # show one file
-./udf ls -t repo/app:latest ./image.tar /usr/local/bin
+./udf info ./image.tar
 ```
 
-Example output:
+```text
+index         0
+total_images  1
+repo_tags     [demo/app:latest]
+config_path   config.json
+architecture  amd64
+working_dir   /app
+layers        [layer1.tar layer2.tar]
+```
+
+### `ls` — list directory contents without extracting
+
+`udf ls` builds the merged filesystem view in memory and renders it like `ls -al`, without writing anything to disk. The CLI prints an aligned table; HTTP and MCP return the same data as structured JSON.
+
+```bash
+./udf ls ./image.tar          # the image root
+./udf ls ./image.tar /etc     # one directory
+```
 
 ```text
-$ ./udf ls ./image.tar /etc
-Image contents: ./image.tar
-total 2
--rw-r--r--   1 root      root           30 Sep 13  2020 passwd
-lrwxrwxrwx   1 root      root           19 Sep 13  2020 resolv.conf -> /run/systemd/resolve
+name    type  mode        size  mod_time                    target
+------  ----  ----------  ----  --------------------------  ------
+group   file  -rw-r--r--  10    2026-08-22T00:04:25+08:00
+passwd  file  -rw-r--r--  30    2026-08-22T00:04:25+08:00
 ```
 
 Details:
 
-- Layers are merged with the same whiteout and opaque-directory semantics as the full extract
-- Long format shows permissions, link count, owner, group, size, mtime and name; symlinks display their target
+- Layers are merged with the same whiteout and opaque-directory semantics as a full extract
+- Columns carry type (`dir|file|symlink|hardlink`), mode, size, mtime and the symlink target
 - Leading `/` in the path is optional; `/` or `.` lists the image root
-- Use `-t` / `-i` to select an image in a multi-image archive
+- A file path lists that single entry
 
 ### `cp` — extract a single file or directory
-
-`udf cp` streams only the entries that belong to the selection, still
-respecting the merged view, so you never have to unpack the whole image.
 
 ```bash
 ./udf cp ./image.tar /etc/passwd ./passwd
@@ -181,17 +216,25 @@ Destination semantics mirror `cp`:
 - Extracting `/` (the image root) puts the contents directly into `<dest>`
 - Whiteout-processed entries are skipped, symlinks are recreated as symlinks, and hardlinks are preserved when the source stays inside the selection (content is copied otherwise)
 
+### `extract` — extract the merged rootfs
+
+```bash
+./udf extract ./image.tar
+./udf ./image.tar                     # extract is the default command
+./udf extract -o ./output -f -t repo/app:latest './repo/*.tar'
+```
+
+`extract` expands its input expression into one or more archives and processes them in order. The result is one row per archive (table on the CLI, JSON array over HTTP/MCP), and a row carries its own message when one archive fails without stopping the rest:
+
+```text
+archive      output_dir                     layers  error
+-----------  -----------------------------  ------  -----
+./image.tar  /tmp/out/image                 2
+```
+
 ## Output Rules
 
-If `-o/--output` is not specified:
-
-- output goes beside the input archive
-
-If `-o/--output` is specified:
-
-- output goes under the given parent directory
-
-Output layout:
+For `extract`, if `-o/--output` is not specified the output goes beside each input archive; with `-o` it goes under the given parent directory:
 
 - single-image archive:
   - `{file_name}/`
@@ -215,26 +258,15 @@ output: /data/demo/bundle/repo_app_1.0
 
 ## Options
 
-- `-o, --output`
-  - Output parent directory
-  - A same-named subdirectory will be created
-  - Defaults to the input file's directory
-- `-f, --force`
-  - Force writing into an existing non-empty target directory
-  - Does not clear the directory first
-- `-t, --repo-tag`
-  - Select the image by `RepoTags` from `manifest.json`
-  - Recommended when one archive contains multiple images
-- `-i, --image-index`
-  - Select the image by index in the `manifest.json` array
-- `-b, --buffer-size`
-  - File copy buffer size in bytes
-- `-l, --lang`
-  - CLI language: `zh` or `en`
-- `--no-progress`
-  - Disable the dynamic progress bar
+Command flags:
 
-The `ls` and `cp` subcommands share `-t` and `-i` (plus `-b` for `cp`); their `--lang` flag has no `-l` shorthand.
+- `-t, --repo-tag` — select the image by `RepoTags` from `manifest.json` (`info`, `ls`, `cp`, `extract`)
+- `-i, --image-index` — select the image by its index in the `manifest.json` array (all commands)
+- `-o, --output` — output parent directory (`extract`)
+- `-f, --force` — write into an existing non-empty target directory (`extract`)
+- `-b, --buffer-size` — file copy buffer size in bytes (`cp`, `extract`)
+
+Built-in flags come from xyz-go: `-h/--help`, `-v/--version`, `--json`, and `completion bash|zsh|fish`. The `serve` and `mcp` modes add `--addr`, `--bearer`, `--cors`, `--tls-cert`/`--tls-key`, `--timeout`, `--log-level` (plus `--versions` and `--session-timeout` for `mcp`) — details in the [xyz-go README](https://github.com/ejfkdev/xyz-go).
 
 ## Multi-image Archives
 
@@ -245,13 +277,7 @@ If an archive contains only one image:
 If an archive contains multiple images:
 
 - a selection is required; `udf` is not interactive — without `-t` or `-i` it exits with an error whose message lists the available options
-- you should usually use `-t`
 - pick a value from the error message and re-run with `-t` or `-i`
-
-`-t` and `-i` do not mean the same thing:
-
-- `-t` selects by tag
-- `-i` selects by position in `manifest.json`
 
 ## Generated Files
 
@@ -264,11 +290,18 @@ For each extracted image, `udf` writes:
 
 ## Error Handling
 
-- In batch mode, one failed archive does not stop the others
-- Non-image archives are skipped in batch mode
-- Exit codes: `0` when at least one image was processed successfully (even if others failed in batch mode), `1` when nothing could be processed
-- Project-generated user-facing messages support both Chinese and English
-- Low-level system errors are preserved as-is for diagnostics
+One error taxonomy drives all three interfaces:
+
+| Kind | CLI exit | HTTP status | MCP code |
+|---|---|---|---|
+| invalid input | 2 | 400 | -32602 |
+| not found | 1 | 404 | -32001 |
+| conflict | 1 | 409 | -32009 |
+| unauthorized / forbidden | 1 | 401 / 403 | -32010 / -32011 |
+| unavailable | 1 | 503 | -32603 |
+| internal | 1 | 500 | -32603 |
+
+Batch `extract` keeps going after one archive fails: failures land in the row's `error` column, and the command only reports an error itself when nothing succeeded. Low-level system errors are preserved as-is for diagnostics.
 
 ## Technical Notes
 
@@ -283,10 +316,12 @@ For each extracted image, `udf` writes:
 - zstd-compressed inner layers are not supported and fail with an explicit error
 - Directory input only scans the top level and is not recursive
 - Multi-image archives require an explicit `-t`/`-i` selection; `udf` never prompts interactively
+- One input expression per command; use a directory or a glob for batches
+- CLI/HTTP/MCP messages are English; the Go library errors still carry stable i18n keys
 
 ## Use as a Library
 
-Everything is importable as a Go library — no code lives under `internal/`:
+Everything is importable as a Go library:
 
 ```go
 package main
@@ -315,6 +350,13 @@ func main() {
 	}
 	fmt.Println(listing)
 
+	// The same view as structured data.
+	entries, err := image.ListEntries(tree, "/etc")
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = entries
+
 	// Extract a single file out of the image.
 	if _, err := image.ExtractPath("./app.tar", meta, "/etc/passwd", "./passwd", 1<<20); err != nil {
 		log.Fatal(err)
@@ -338,12 +380,11 @@ Selection and not-found errors implement `*i18n.LocalizedError` with a stable
 
 Supported:
 
-- offline image archive extraction
-- batch processing
-- listing merged image contents without extracting (`ls`)
-- extracting a single file or directory (`cp`)
-- bilingual CLI
+- offline image archive extraction, batch via directory or glob
+- listing merged image contents without extracting (`ls`), selective extraction (`cp`), metadata (`info`)
+- one binary, three interfaces: CLI, HTTP (REST + OpenAPI), MCP tools
 - config YAML export
+- importable as a Go library
 
 Not intended as:
 
