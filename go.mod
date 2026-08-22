@@ -3,7 +3,7 @@ module github.com/ejfkdev/udf
 go 1.26.1
 
 require (
-	github.com/ejfkdev/xyz-go v0.2.3
+	github.com/ejfkdev/xyz-go v0.2.4
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/pelletier/go-toml/v2 v2.3.0
 	golang.org/x/text v0.32.0

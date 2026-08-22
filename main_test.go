@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	errs "github.com/ejfkdev/xyz-go/errors"
@@ -246,5 +247,35 @@ func TestToXyzErrMapsLocalizedKeys(t *testing.T) {
 	unknown := toXyzErr(i18n.NewError("err_something_else", nil, nil))
 	if got := errs.Classify(unknown); got != errs.KindInvalidInput {
 		t.Fatalf("unexpected kind: %v", got)
+	}
+}
+
+func TestHelpBlocksCarryMetaInfo(t *testing.T) {
+	before := helpBeforeBlock()
+	for _, want := range []string{
+		helpSummary,
+		"版本: " + version,
+		helpRepoURL,
+		"示例:",
+		"udf ls ./image.tar /etc",
+		"udf cp ./image.tar /etc/passwd ./passwd",
+		"udf serve --addr 127.0.0.1:8080",
+		"udf mcp stdio",
+	} {
+		if !strings.Contains(before, want) {
+			t.Errorf("help Before block missing %q:\n%s", want, before)
+		}
+	}
+
+	for _, want := range []string{"-h, --help", "-v, --version", "--json", "completion", "--bearer", "--versions"} {
+		if !strings.Contains(helpOptionsBlock, want) {
+			t.Errorf("help After block missing %q:\n%s", want, helpOptionsBlock)
+		}
+	}
+
+	for _, want := range []string{"默认命令", "udf ./image.tar", "flag 请放在路径之后"} {
+		if !strings.Contains(extractHelpAfter, want) {
+			t.Errorf("extract help After block missing %q:\n%s", want, extractHelpAfter)
+		}
 	}
 }
