@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.5.1] - 2026-08-29
+
+### Fixed
+
+- Single-file compressed inputs (`.gz`/`.bz2`/`.xz`/`.zst`/`.lz4` of a non-tar
+  file) are no longer misclassified as compressed tar archives, so they no
+  longer surface a confusing `read tar entry: unexpected EOF`
+- ODC-format cpio (`070707` octal fields) is no longer reported as a readable
+  cpio; only newc/crc (`070701`/`070702`) are (the reader does not parse ODC)
+
 ## [v0.5.0] - 2026-08-29
 
 ### Added

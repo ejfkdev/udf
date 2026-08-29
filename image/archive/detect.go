@@ -49,7 +49,7 @@ func Detect(path string) (string, error) {
 		return "7z", nil
 	case hasPrefix(b, "Rar!\x1a\x07\x00") || hasPrefix(b, "Rar!\x1a\x07\x01\x00"):
 		return "rar", nil
-	case hasPrefix(b, "070701") || hasPrefix(b, "070702") || hasPrefix(b, "070707"):
+	case hasPrefix(b, "070701") || hasPrefix(b, "070702"):
 		return "cpio", nil
 	case hasPrefix(b, cabMagic):
 		return "cab", nil
@@ -93,9 +93,10 @@ func compSuffix(comp string) string {
 
 // detectCompressed identifies what a compressed stream wraps by decompressing
 // its leading bytes and inspecting the inner magic. It returns "cpio.<suffix>"
-// for a cpio payload and "tar.<suffix>" otherwise, so a truncated or
-// unrecognized compressed payload keeps the historical "compressed tar"
-// classification rather than being dropped as unsupported.
+// for a cpio payload, "tar.<suffix>" for a tar, and "" when the payload is
+// neither (e.g. a single compressed file, which the archive pipeline cannot
+// list or extract). A payload that fails to decompress is still treated as a
+// compressed tar to preserve the historical "gzip => tar.gz" behaviour.
 func detectCompressed(path, comp string) (string, error) {
 	suffix := compSuffix(comp)
 	f, err := os.Open(path)
@@ -113,8 +114,14 @@ func detectCompressed(path, comp string) (string, error) {
 	var head [512]byte
 	n, _ := io.ReadFull(r, head[:])
 	b := head[:n]
-	if hasPrefix(b, "070701") || hasPrefix(b, "070702") || hasPrefix(b, "070707") {
+	switch {
+	case hasPrefix(b, "070701") || hasPrefix(b, "070702"):
 		return "cpio." + suffix, nil
+	case len(b) >= 262 && string(b[257:262]) == "ustar":
+		return "tar." + suffix, nil
+	default:
+		// A single compressed file (not a tar/cpio) is not something the archive
+		// pipeline can list or extract, so leave it unrecognized.
+		return "", nil
 	}
-	return "tar." + suffix, nil
 }
