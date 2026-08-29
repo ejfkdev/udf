@@ -34,6 +34,24 @@ func TestScanImageMetadataCacheRoundTrip(t *testing.T) {
 	}
 }
 
+// fileEntriesEqual compares the two listings semantically: ModTime is compared
+// by instant (its Location and monotonic reading differ after a JSON round-trip
+// but represent the same wall-clock time).
+func fileEntriesEqual(a, b []FileEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		x, y := a[i], b[i]
+		if x.Name != y.Name || x.Type != y.Type || x.Mode != y.Mode ||
+			x.Size != y.Size || x.Target != y.Target || x.FSType != y.FSType ||
+			!x.ModTime.Equal(y.ModTime) {
+			return false
+		}
+	}
+	return true
+}
+
 func TestListArchiveCache(t *testing.T) {
 	f := buildTestImage(t, map[string][]layerTarEntry{
 		"a.tar": {
@@ -51,7 +69,7 @@ func TestListArchiveCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list cached: %v", err)
 	}
-	if !reflect.DeepEqual(e1, e2) {
+	if !fileEntriesEqual(e1, e2) {
 		t.Fatalf("listing mismatch after cache:\n%+v\nvs\n%+v", e1, e2)
 	}
 

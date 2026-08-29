@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -107,14 +108,20 @@ func TestCPIOListAndOpen(t *testing.T) {
 	names := map[string]bool{}
 	for _, e := range entries {
 		names[e.Name] = true
+		// GNU cpio strips the "./" prefix that BSD cpio keeps, so the fixture's
+		// entry names differ by platform; normalize both spellings.
+		names[strings.TrimPrefix(e.Name, "./")] = true
 	}
-	if !names["./hello.txt"] || !names["./sub/nested.txt"] {
+	if !names["hello.txt"] || !names["sub/nested.txt"] {
 		t.Fatalf("expected hello.txt and sub/nested.txt in listing, got %v", names)
 	}
 
-	rc, size, err := a.Open("./hello.txt")
+	rc, size, err := a.Open("hello.txt")
 	if err != nil {
-		t.Fatalf("Open ./hello.txt: %v", err)
+		rc, size, err = a.Open("./hello.txt")
+		if err != nil {
+			t.Fatalf("Open hello.txt: %v", err)
+		}
 	}
 	data, err := io.ReadAll(rc)
 	rc.Close()
