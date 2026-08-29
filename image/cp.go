@@ -11,6 +11,7 @@ import (
 	"github.com/ejfkdev/udf/fsutil"
 	"github.com/ejfkdev/udf/fsview"
 	appi18n "github.com/ejfkdev/udf/i18n"
+	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/layer"
 	"github.com/ejfkdev/udf/types"
 )
@@ -38,7 +39,7 @@ func ExtractPath(imageTarPath string, meta *types.ImageMetadata, sourcePath, des
 		return 0, appi18n.NewError("err_cp_src_not_found", map[string]any{"Path": sourcePath}, nil)
 	}
 
-	archive, err := openArchive(imageTarPath)
+	archive, err := arch.Open(imageTarPath)
 	if err != nil {
 		return 0, err
 	}
@@ -75,7 +76,7 @@ func ExtractPath(imageTarPath string, meta *types.ImageMetadata, sourcePath, des
 
 type extractPlan struct {
 	tree       *fsview.Node
-	archive    imageArchive
+	archive    arch.Archive
 	destRoot   string
 	singleFile bool
 	fileTarget string
@@ -83,7 +84,7 @@ type extractPlan struct {
 	byLayer    map[string]map[string]*fsview.Node // layer -> clean entry path
 }
 
-func makeExtractPlan(tree *fsview.Node, archive imageArchive, srcNode *fsview.Node, srcRel, destPath string) (*extractPlan, error) {
+func makeExtractPlan(tree *fsview.Node, archive arch.Archive, srcNode *fsview.Node, srcRel, destPath string) (*extractPlan, error) {
 	plan := &extractPlan{
 		tree:     tree,
 		archive:  archive,

@@ -42,10 +42,11 @@ var helpTextsByLang = map[langx.Language]helpTexts{
   udf serve --addr 127.0.0.1:8080           启动 HTTP REST 服务
   udf mcp stdio                             启动 MCP stdio 服务`,
 		formats: `支持的输入（按文件内容识别，不靠扩展名）:
-  归档:     tar / tar.gz(tgz) / zip / 7z / rar / cpio，以及 OCI 布局、docker save 目录
+  归档:     tar / tar.gz(tgz) / tar.xz / tar.bz2 / tar.zst / tar.lz4 / zip / 7z / rar /
+            cpio(cpio.gz/xz/zst，含 initramfs) / asar / rpm / deb(ipk) / cab / nar(nix) / xar(.pkg)，以及 OCI 布局 / OCI 归档(.oci.tar，含 flatpak) / docker save
   虚拟磁盘: qcow2 / qcow1 / vmdk / vhd(vhdx) / vdi / qed / parallels / vma / ova(ovf) / sif / ffu /
-            wim(esd/swm) / raw(img) / ami
-  文件系统: ext2/3/4 / xfs / squashfs / iso9660 / udf / exfat / erofs(未压缩) / fat12/16/32，含 LVM2 逻辑卷`,
+            wim(esd/swm) / raw(img) / ami / appimage
+  文件系统: ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs(未压缩) / fat12/16/32，含 LVM2 逻辑卷`,
 		options: `内置选项:
   -h, --help         显示帮助（总览或当前子命令）
   -v, --version      显示版本号
@@ -78,10 +79,11 @@ var helpTextsByLang = map[langx.Language]helpTexts{
   udf serve --addr 127.0.0.1:8080           start the HTTP REST service
   udf mcp stdio                             start the MCP stdio server`,
 		formats: `Supported inputs (detected by content, not extension):
-  archives:      tar / tar.gz (tgz) / zip / 7z / rar / cpio, plus OCI layouts and docker save dirs
+  archives:      tar / tar.gz (tgz) / tar.xz / tar.bz2 / tar.zst / tar.lz4 / zip / 7z / rar /
+                 cpio (cpio.gz/xz/zst, incl. initramfs) / asar / rpm / deb (ipk) / cab / nar (nix) / xar (.pkg), plus OCI layouts, oci-archive tars (incl. flatpak) and docker save dirs
   disk images:   qcow2 / qcow1 / vmdk / vhd (vhdx) / vdi / qed / parallels / vma / ova (ovf) / sif / ffu /
-                 wim (esd/swm) / raw (img) / ami
-  filesystems:   ext2/3/4 / xfs / squashfs / iso9660 / udf / exfat / erofs (uncompressed) / fat12/16/32,
+                 wim (esd/swm) / raw (img) / ami / appimage
+  filesystems:   ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs (uncompressed) / fat12/16/32,
                  incl. LVM2 logical volumes`,
 		options: `Built-in options:
   -h, --help         show help (overview or per-command)

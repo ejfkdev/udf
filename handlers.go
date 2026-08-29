@@ -67,15 +67,26 @@ type InfoResult struct {
 	// Disks carries disk-image metadata (qcow2/vmdk/ova), present only for
 	// disk inputs.
 	Disks []image.DiskInfo `json:"disks,omitempty"`
+
+	// Plain carries plain-archive metadata (asar/rpm/tar/zip/...), present only
+	// for non-docker, non-disk archive inputs.
+	Plain *image.PlainInfo `json:"plain,omitempty"`
 }
 
 func infoImage(_ context.Context, in *InfoArgs) (*InfoResult, error) {
-	if image.IsDiskImage(in.Archive) {
+	switch image.ClassifyInput(in.Archive) {
+	case "disk":
 		meta, err := image.ScanDiskMetadata(in.Archive)
 		if err != nil {
 			return nil, toXyzErr(err)
 		}
 		return &InfoResult{Disks: meta.Disks}, nil
+	case "archive":
+		info, err := image.PlainArchiveInfo(in.Archive)
+		if err != nil {
+			return nil, toXyzErr(err)
+		}
+		return &InfoResult{Plain: info}, nil
 	}
 
 	sel, err := selectionFor(in.RepoTag, in.ImageIndex)
@@ -114,8 +125,15 @@ type LsArgs struct {
 }
 
 func listImage(_ context.Context, in *LsArgs) ([]image.FileEntry, error) {
-	if image.IsDiskImage(in.Archive) {
+	switch image.ClassifyInput(in.Archive) {
+	case "disk":
 		entries, err := image.ListDisk(in.Archive, in.Path)
+		if err != nil {
+			return nil, toXyzErr(err)
+		}
+		return entries, nil
+	case "archive":
+		entries, err := image.ListPlainArchive(in.Archive, in.Path)
 		if err != nil {
 			return nil, toXyzErr(err)
 		}
@@ -155,8 +173,15 @@ func copyEntry(_ context.Context, in *CpArgs) (*CpResult, error) {
 	if in.BufferSize <= 0 {
 		return nil, errs.New(errs.KindInvalidInput, fmt.Sprintf("invalid buffer size: %d", in.BufferSize))
 	}
-	if image.IsDiskImage(in.Archive) {
+	switch image.ClassifyInput(in.Archive) {
+	case "disk":
 		count, err := image.ExtractDiskPath(in.Archive, in.Source, in.Dest, in.BufferSize)
+		if err != nil {
+			return nil, toXyzErr(err)
+		}
+		return &CpResult{Source: in.Source, Dest: in.Dest, Extracted: count}, nil
+	case "archive":
+		count, err := image.ExtractPlainPath(in.Archive, in.Source, in.Dest, in.BufferSize)
 		if err != nil {
 			return nil, toXyzErr(err)
 		}
@@ -212,8 +237,15 @@ func catEntry(_ context.Context, in *CatArgs) (any, error) {
 // openImageFileReader resolves one in-image path and returns a reader over its
 // bytes, routing disk images and archives the same way cp and cat do.
 func openImageFileReader(archive, source, repoTag string, imageIndex int) (io.ReadCloser, error) {
-	if image.IsDiskImage(archive) {
+	switch image.ClassifyInput(archive) {
+	case "disk":
 		rc, _, err := image.ReadDiskFile(archive, source)
+		if err != nil {
+			return nil, toXyzErr(err)
+		}
+		return rc, nil
+	case "archive":
+		rc, _, err := image.ReadPlainArchiveFile(archive, source)
 		if err != nil {
 			return nil, toXyzErr(err)
 		}
@@ -338,8 +370,11 @@ func extractImages(ctx context.Context, in *ExtractArgs) ([]ExtractResult, error
 }
 
 func extractOne(p, outputDir string, force bool, bufferSize int, sel image.Selection) (ExtractResult, error) {
-	if image.IsDiskImage(p) {
+	switch image.ClassifyInput(p) {
+	case "disk":
 		return extractDiskOne(p, outputDir, force, bufferSize)
+	case "archive":
+		return extractPlainOne(p, outputDir, force, bufferSize)
 	}
 
 	meta, err := image.ScanImageMetadata(p, sel)
@@ -370,4 +405,15 @@ func extractDiskOne(p, outputDir string, force bool, bufferSize int) (ExtractRes
 		return ExtractResult{}, toXyzErr(err)
 	}
 	return ExtractResult{Archive: p, OutputDir: target}, nil
+}
+
+func extractPlainOne(p, outputDir string, force bool, bufferSize int) (ExtractResult, error) {
+	target := resolveOutputDir(p, outputDir, nil)
+	if err := image.PrepareOutputDir(target, force); err != nil {
+		return ExtractResult{}, errs.New(errs.KindConflict, err.Error())
+	}
+	if _, err := image.ExtractPlainArchive(p, target, bufferSize); err != nil {
+		return ExtractResult{}, toXyzErr(err)
+	}
+	return ExtractResult{Archive: p, OutputDir: target, Layers: 1}, nil
 }

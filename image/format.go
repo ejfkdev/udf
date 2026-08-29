@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ejfkdev/udf/erofs"
+	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/udffs"
 )
 
@@ -97,34 +98,14 @@ func detectDiskContainer(path string) (string, error) {
 		return "wim", nil
 	}
 
+	if hasPrefix(b, "\x7fELF") && isAppImage(path) {
+		return "appimage", nil
+	}
 	if isOVA(path, b) {
 		return "ova", nil
 	}
 	if isOVF(path, b) {
 		return "ovf", nil
-	}
-	return "", nil
-}
-
-// detectArchive classifies a plain archive (tar/zip/7z/rar/cpio) by header.
-func detectArchive(path string) (string, error) {
-	b, err := readMagic(path, 512)
-	if err != nil {
-		return "", err
-	}
-	switch {
-	case hasPrefix(b, "\x1f\x8b"): // gzip
-		return "tar.gz", nil
-	case len(b) >= 262 && string(b[257:262]) == "ustar":
-		return "tar", nil
-	case hasPrefix(b, "PK\x03\x04") || hasPrefix(b, "PK\x05\x06") || hasPrefix(b, "PK\x07\x08"):
-		return "zip", nil
-	case hasPrefix(b, "7z\xbc\xaf\x27\x1c"):
-		return "7z", nil
-	case hasPrefix(b, "Rar!\x1a\x07\x00") || hasPrefix(b, "Rar!\x1a\x07\x01\x00"):
-		return "rar", nil
-	case hasPrefix(b, "070701") || hasPrefix(b, "070702") || hasPrefix(b, "070707"):
-		return "cpio", nil
 	}
 	return "", nil
 }
@@ -177,6 +158,9 @@ func detectRawFilesystem(path string) bool {
 		if hasPrefix(fb[:], "hsqs") || hasPrefix(fb[:], "sqsh") || hasPrefix(fb[:], "XFSB") {
 			return true
 		}
+		if hasPrefix(fb[3:], "NTFS    ") {
+			return true
+		}
 		if hasPrefix(fb[3:], "EXFAT   ") {
 			return true
 		}
@@ -198,6 +182,12 @@ func detectRawFilesystem(path string) bool {
 		return true
 	}
 
+	// btrfs: superblock magic "_BHRfS_M" at 64 KiB + 0x40.
+	var bs [8]byte
+	if _, err := f.ReadAt(bs[:], 0x10040); err == nil && string(bs[:]) == "_BHRfS_M" {
+		return true
+	}
+
 	// UDF and EROFS have their own dedicated header probes.
 	if erofs.Detect(f, 0) || udffs.Detect(f, 0) {
 		return true
@@ -212,7 +202,7 @@ func DetectInput(path string) string {
 	if c, err := detectDiskContainer(path); err == nil && c != "" {
 		return "disk"
 	}
-	if a, err := detectArchive(path); err == nil && a != "" {
+	if a, err := arch.Detect(path); err == nil && a != "" {
 		return "archive"
 	}
 	if detectRawFilesystem(path) {

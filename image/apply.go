@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/ejfkdev/udf/fsutil"
+	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/layer"
 	"github.com/ejfkdev/udf/types"
 )
@@ -42,7 +43,7 @@ func PrepareOutputDir(outputDir string, force bool) error {
 }
 
 func ApplyImage(imageTarPath string, meta *types.ImageMetadata, outputDir string, bufferSize int, progress ProgressReporter) error {
-	archive, err := openArchive(imageTarPath)
+	archive, err := arch.Open(imageTarPath)
 	if err != nil {
 		return err
 	}

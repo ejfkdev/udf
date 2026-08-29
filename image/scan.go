@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	appi18n "github.com/ejfkdev/udf/i18n"
+	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/types"
 )
 
@@ -31,7 +32,7 @@ func ScanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata
 }
 
 func scanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata, error) {
-	archive, err := openArchive(imageTarPath)
+	archive, err := arch.Open(imageTarPath)
 	if err != nil {
 		return nil, err
 	}
@@ -138,14 +139,14 @@ func formatManifestChoices(manifest []types.ManifestItem) string {
 }
 
 func readNamedEntry(imageTarPath, targetName string) ([]byte, error) {
-	archive, err := openArchive(imageTarPath)
+	archive, err := arch.Open(imageTarPath)
 	if err != nil {
 		return nil, err
 	}
 	return readEntry(archive, targetName)
 }
 
-func readEntry(archive imageArchive, targetName string) ([]byte, error) {
+func readEntry(archive arch.Archive, targetName string) ([]byte, error) {
 	rc, _, err := archive.Open(targetName)
 	if err != nil {
 		return nil, err

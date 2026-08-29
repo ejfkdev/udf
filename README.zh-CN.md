@@ -39,9 +39,9 @@ English version: [README.md](./README.md)
 归档处理：
 
 - 将镜像归档解包为合并后的 `rootfs`
-- 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.zip`、`.7z`、`.rar`、`.cpio`（以及 `.ppkg` Windows 预配包，OPC/ZIP）
-- 虚拟磁盘镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM、ESD、SWM、FFU、raw/`.img`/`.ami`、OVA、OVF、VMA、SIF（ext4/xfs/squashfs/ISO9660/UDF/exFAT/EROFS/FAT，含 LVM2 逻辑卷）
-- 支持常见镜像归档结构：平铺结构 `manifest.json + config.json + layers/...`、经典 `docker save` 结构 `<layer-id>/layer.tar`，以及 OCI 镜像布局目录
+- 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.tar.xz`、`.tar.bz2`、`.tar.zst`、`.tar.lz4`、`.zip`、`.7z`、`.rar`、`.cpio`（以及 `.cpio.gz`/`.cpio.xz`/`.cpio.zst`，如 initramfs）、`.asar`（Electron）、`.rpm`、`.deb`/`.ipk`、`.cab`（含 `.msi` 内嵌 cab）、`.nar`（Nix）、`.xar`/`.pkg`（macOS 安装器）（以及 `.ppkg` Windows 预配包，OPC/ZIP）
+- 虚拟磁盘镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM、ESD、SWM、FFU、raw/`.img`/`.ami`、OVA、OVF、VMA、SIF、AppImage（ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT，含 LVM2 逻辑卷）
+- 支持常见镜像归档结构：平铺结构 `manifest.json + config.json + layers/...`、经典 `docker save` 结构 `<layer-id>/layer.tar`、OCI 镜像布局目录，以及单文件 OCI 镜像归档（`.oci.tar`，含 flatpak bundle）
 - 输入可以是单个归档、通配符模式或目录（只扫描一层）
 
 合并正确性：
@@ -103,7 +103,7 @@ English version: [README.md](./README.md)
 虚拟磁盘按「路径树」寻址：`/` 列出磁盘（多磁盘 OVA）或卷，`/<卷>` 进入某个卷，之后就是卷内路径。分区命名为 `p1`…`pN`，LVM 逻辑卷命名为 `vg/lv`。
 
 - 解析 MBR/GPT 分区表，并内置解析 LVM2 物理卷：每个逻辑卷都作为可选卷暴露，与普通分区并列
-- 可解出的文件系统为 **ext4**、**xfs**、**squashfs**、**ISO9660**、**UDF**、**exFAT**、**EROFS** 与 **FAT**（fat12/16/32）
+- 可解出的文件系统为 **ext4**、**xfs**、**btrfs**、**NTFS**、**squashfs**、**ISO9660**、**UDF**、**exFAT**、**EROFS** 与 **FAT**（fat12/16/32）
 - 磁盘含多个文件系统时，`ls`/`cp` 需要带卷前缀（或从 `/` 逐层下钻）；只有一个文件系统卷时隐式使用该卷，所以 `./udf ls img.qcow2 /etc` 对简单镜像依然好用
 - `extract` 解出所有文件系统卷；卷多时每个卷落到以卷名命名的子目录
 - 普通文件、目录、软链接会原样重建；硬链接变为独立副本，设备节点、FIFO、套接字会被跳过
@@ -193,7 +193,7 @@ go build -o udf .
 
 每个命令接收**一个输入表达式**作为归档：
 
-- 单个归档文件（`.tar`/`.tar.gz`/`.tgz`/`.zip`）或磁盘镜像（`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`）——`info`、`ls`、`cp` 要求此形式
+- 单个归档文件（`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`）或磁盘镜像（`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`）——`info`、`ls`、`cp` 要求此形式
 - 通配符模式或目录（只扫描一层，不递归）——`extract` 额外支持，并展开为批量处理
 
 示例：
@@ -383,7 +383,7 @@ archive      output_dir                     layers  error
 ## 已知限制
 
 - 不支持 zstd 压缩的层（会明确报错）
-- 磁盘镜像必须包含受支持的文件系统（ext4/xfs/squashfs/ISO9660/UDF/exFAT/FAT）（整块磁盘、分区或 LVM2 逻辑卷）；btrfs 等其他文件系统 `info` 会列出但不会解出
+- 磁盘镜像必须包含受支持的文件系统（ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/FAT）（整块磁盘、分区或 LVM2 逻辑卷）；JFS/ReiserFS 等其余文件系统 `info` 会列出但不会解出
 - 磁盘解包会重建普通文件、目录与软链接；不保留文件属主（文件以当前用户写入）
 - 目录输入只扫描当前一层，不递归子目录
 - 多镜像归档必须显式指定 `-t` / `-i`，程序不会交互式询问
@@ -453,9 +453,9 @@ func main() {
 
 当前支持：
 
-- 归档解包（tar、tar.gz/tgz、zip、7z、rar、cpio、OCI 布局、`docker save`），目录 / 通配符批量
+- 归档解包（tar、tar.gz/tgz、tar.xz、tar.bz2、tar.zst、tar.lz4、zip、7z、rar、cpio、cpio.gz/xz/zst、asar、rpm、deb/ipk、cab、nar、xar/pkg、OCI 布局、OCI 归档/flatpak、`docker save`），目录 / 通配符批量
 - 磁盘 / 虚拟机镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM/ESD/SWM、FFU、VMA、SIF、OVA/OVF、raw/`.img`/`.ami`
-- 文件系统（整块磁盘、分区或 LVM2 逻辑卷）：ext2/3/4、xfs、squashfs、ISO9660、UDF、exFAT、EROFS（未压缩）、FAT12/16/32
+- 文件系统（整块磁盘、分区或 LVM2 逻辑卷）：ext2/3/4、xfs、btrfs、NTFS、squashfs、ISO9660、UDF、exFAT、EROFS（未压缩）、FAT12/16/32
 - 不解压列出内容（`ls`）、单独提取（`cp`）、元数据（`info`）、单文件读 stdout（`cat`）、十六进制文件头（`xxd`）、整包解压（`extract`）
 - 一个二进制、三种接口：CLI、HTTP（REST + OpenAPI）、MCP 工具
 - `config.yaml` 导出

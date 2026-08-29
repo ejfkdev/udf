@@ -15,6 +15,7 @@ import (
 	"time"
 
 	libvhdi "github.com/aoiflux/libvhdi"
+	diskbtrfs "github.com/carbon-os/diskimg/btrfs"
 	diskxfs "github.com/carbon-os/diskimg/xfs"
 	"github.com/ejfkdev/udf/diskkit"
 	"github.com/ejfkdev/udf/diskkit/backend"
@@ -33,7 +34,9 @@ import (
 	"github.com/ejfkdev/udf/fsutil"
 	"github.com/ejfkdev/udf/fsview"
 	appi18n "github.com/ejfkdev/udf/i18n"
+	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/lvm2"
+	"github.com/ejfkdev/udf/ntfs"
 	"github.com/ejfkdev/udf/ova"
 	"github.com/ejfkdev/udf/parallels"
 	"github.com/ejfkdev/udf/qcow"
@@ -53,7 +56,7 @@ func IsDiskImage(path string) bool {
 	if c, err := detectDiskContainer(path); err == nil && c != "" {
 		return true
 	}
-	if a, err := detectArchive(path); err == nil && a != "" {
+	if a, err := arch.Detect(path); err == nil && a != "" {
 		return false
 	}
 	return detectRawFilesystem(path)
@@ -351,6 +354,29 @@ func openDisks(path string) ([]*diskBackend, func() error, error) {
 			format: "ffu",
 			name:   filepath.Base(path),
 		}}, func() error { return f.Close() }, nil
+	case "appimage":
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		st, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			return nil, nil, err
+		}
+		off, err := appimageSquashfsOffset(f, st.Size())
+		if err != nil {
+			_ = f.Close()
+			return nil, nil, fmt.Errorf("open appimage %s: %w", path, err)
+		}
+		ra := io.NewSectionReader(f, off, st.Size()-off)
+		return []*diskBackend{{
+			ra:     ra,
+			size:   st.Size() - off,
+			path:   path,
+			format: "appimage",
+			name:   filepath.Base(path),
+		}}, func() error { return f.Close() }, nil
 	case "qcow2":
 		return openQcow2Backend(path)
 	default:
@@ -580,6 +606,33 @@ func (r *xfsReader) Stat(name string) (fs.FileInfo, error)      { return r.v.Lst
 func (r *xfsReader) Readlink(name string) (string, error)       { return r.v.Readlink(name) }
 func (r *xfsReader) Close() error                               { return r.v.Unmount() }
 
+type btrfsReader struct{ v *diskbtrfs.Volume }
+
+func (r *btrfsReader) Open(name string) (fs.File, error)          { return r.v.Open(name) }
+func (r *btrfsReader) ReadDir(name string) ([]fs.DirEntry, error) { return r.v.ReadDir(name) }
+func (r *btrfsReader) Stat(name string) (fs.FileInfo, error)      { return r.v.Lstat(name) }
+func (r *btrfsReader) Readlink(name string) (string, error)       { return r.v.Readlink(name) }
+func (r *btrfsReader) Close() error                               { return r.v.Unmount() }
+
+// mountedFSReader adapts a filesystem volume that exposes Unmount rather than
+// Close and whose concrete type is unexported (the NTFS driver), so the value
+// can only be held through its method set.
+type mountedFSReader struct {
+	v interface {
+		Open(string) (fs.File, error)
+		ReadDir(string) ([]fs.DirEntry, error)
+		Lstat(string) (fs.FileInfo, error)
+		Readlink(string) (string, error)
+		Unmount() error
+	}
+}
+
+func (r mountedFSReader) Open(name string) (fs.File, error)          { return r.v.Open(name) }
+func (r mountedFSReader) ReadDir(name string) ([]fs.DirEntry, error) { return r.v.ReadDir(name) }
+func (r mountedFSReader) Stat(name string) (fs.FileInfo, error)      { return r.v.Lstat(name) }
+func (r mountedFSReader) Readlink(name string) (string, error)       { return r.v.Readlink(name) }
+func (r mountedFSReader) Close() error                               { return r.v.Unmount() }
+
 // region describes one candidate volume to probe for a filesystem.
 type region struct {
 	name  string
@@ -649,6 +702,13 @@ func discoverVolumes(be *diskBackend) ([]DiskVolume, int64, error) {
 		}
 	} else {
 		// No partition table: the filesystem (if any) covers the whole disk.
+		regions = append(regions, region{name: "disk", kind: "disk", start: 0, size: d.Size, probe: true})
+	}
+
+	// A boot sector (NTFS/FAT/exFAT VBR) also ends with the 0x55AA bootstrap
+	// signature, so an MBR parse can "succeed" with zero valid partitions even
+	// though the image is a bare filesystem. Fall back to the whole disk.
+	if len(regions) == 0 {
 		regions = append(regions, region{name: "disk", kind: "disk", start: 0, size: d.Size, probe: true})
 	}
 
@@ -829,8 +889,16 @@ func detectFilesystem(be *diskBackend, start, size, blocksize int64) string {
 		return "squashfs"
 	case hasPrefix(b[:], "XFSB"):
 		return "xfs"
+	case len(b) >= 11 && hasPrefix(b[3:], "NTFS    "):
+		return "ntfs"
 	case len(b) >= 11 && hasPrefix(b[3:], "EXFAT   "):
 		return "exfat"
+	}
+
+	// btrfs superblock magic sits at 64 KiB + 0x40.
+	var s [8]byte
+	if _, err := be.ReadAt(s[:], start+0x10040); err == nil && string(s[:]) == "_BHRfS_M" {
+		return "btrfs"
 	}
 
 	// ext2/3/4 superblock magic sits at offset 1080.
@@ -1335,6 +1403,18 @@ func openVolumeReaderOn(be *diskBackend, vol DiskVolume, blocksize int64) (diskV
 			return nil, fmt.Errorf("open xfs volume %s: %w", vol.Name, err)
 		}
 		return &xfsReader{v: xv}, nil
+	case "btrfs":
+		bv, err := diskbtrfs.Open(be, vol.Start, vol.Size)
+		if err != nil {
+			return nil, fmt.Errorf("open btrfs volume %s: %w", vol.Name, err)
+		}
+		return &btrfsReader{v: bv}, nil
+	case "ntfs":
+		nv, err := ntfs.Open(be, vol.Start, vol.Size)
+		if err != nil {
+			return nil, fmt.Errorf("open ntfs volume %s: %w", vol.Name, err)
+		}
+		return mountedFSReader{v: nv}, nil
 	case "squashfs":
 		sfs, err := squashfs.Read(be, vol.Size, vol.Start, blocksize)
 		if err != nil {

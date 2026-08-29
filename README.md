@@ -39,9 +39,9 @@ Three interfaces, one definition:
 Archive handling:
 
 - Extract image archives into a merged `rootfs`
-- Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.zip`, `.7z`, `.rar`, `.cpio` (and `.ppkg` Windows provisioning packages, an OPC/ZIP)
-- Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami`, OVA, OVF, VMA, SIF (ext4/xfs/squashfs/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes)
-- Common image layouts: flat `manifest.json + config.json + layers/...`, classic `docker save` (`<layer-id>/layer.tar`), and OCI image layout directories
+- Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz4`, `.zip`, `.7z`, `.rar`, `.cpio` (and `.cpio.gz`/`.cpio.xz`/`.cpio.zst`, e.g. initramfs), `.asar` (Electron), `.rpm`, `.deb`/`.ipk`, `.cab`/`.msi`-embedded cabs, `.nar` (Nix), `.xar`/`.pkg` (macOS installer) (and `.ppkg` Windows provisioning packages, an OPC/ZIP)
+- Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami`, OVA, OVF, VMA, SIF, AppImage (ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes)
+- Common image layouts: flat `manifest.json + config.json + layers/...`, classic `docker save` (`<layer-id>/layer.tar`), OCI image layout directories, and single-file OCI image archives (`.oci.tar`, incl. flatpak bundles)
 - Input may be a single archive, a glob pattern, or a directory (top level scanned)
 
 Extraction correctness:
@@ -110,7 +110,7 @@ Volumes are named `p1`…`pN` for partitions and `vg/lv` for LVM logical volumes
 - MBR/GPT partition tables are parsed, plus LVM2 physical volumes in-process:
   each logical volume is exposed as a selectable volume, in addition to plain
   partitions
-- Filesystems supported for extraction are **ext4**, **xfs**, **squashfs**, **ISO9660**, **UDF**, **exFAT**, **EROFS** and **FAT** (fat12/16/32)
+- Filesystems supported for extraction are **ext4**, **xfs**, **btrfs**, **NTFS**, **squashfs**, **ISO9660**, **UDF**, **exFAT**, **EROFS** and **FAT** (fat12/16/32)
 - When a disk holds several filesystems, `ls` and `cp` require a volume prefix
   (or start from `/` and descend); a single filesystem volume is used
   implicitly, so `./udf ls img.qcow2 /etc` still works for simple images
@@ -204,7 +204,7 @@ Built-in conveniences: `-h` per-command help, `-v` version, `--json` for machine
 
 Every command takes **one input expression** for the archive:
 
-- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`) — required by `info`, `ls` and `cp`
+- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`) — required by `info`, `ls` and `cp`
 - a glob pattern, or a directory (top level scanned, not recursive) — `extract` also accepts these and expands them into a batch
 
 Examples:
@@ -394,7 +394,7 @@ Batch `extract` keeps going after one archive fails: failures land in the row's 
 ## Known Limitations
 
 - zstd-compressed inner layers are not supported and fail with an explicit error
-- A disk image must contain a supported filesystem (ext4/xfs/squashfs/ISO9660/UDF/exFAT/EROFS/FAT) (whole disk, partitions, or LVM2 logical volumes); foreign filesystems such as btrfs are reported by `info` but not extracted
+- A disk image must contain a supported filesystem (ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT) (whole disk, partitions, or LVM2 logical volumes); other filesystems (e.g. JFS/ReiserFS) are reported by `info` but not extracted
 - Disk extraction recreates regular files, directories and symlinks; file ownership is not preserved (files are written as the current user)
 - Directory input only scans the top level and is not recursive
 - Multi-image archives require an explicit `-t`/`-i` selection; `udf` never prompts interactively
@@ -467,9 +467,9 @@ filesystem image.
 
 Supported:
 
-- archive extraction (tar, tar.gz/tgz, zip, 7z, rar, cpio, OCI layout, `docker save`), batch via directory or glob
+- archive extraction (tar, tar.gz/tgz, tar.xz, tar.bz2, tar.zst, tar.lz4, zip, 7z, rar, cpio, cpio.gz/xz/zst, asar, rpm, deb/ipk, cab, nar, xar/pkg, OCI layout, oci-archive/flatpak, `docker save`), batch via directory or glob
 - disk / VM images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM/ESD/SWM, FFU, VMA, SIF, OVA/OVF, raw/`.img`/`.ami`
-- filesystems (whole disk, partitions, or LVM2 logical volumes): ext2/3/4, xfs, squashfs, ISO9660, UDF, exFAT, EROFS (uncompressed), FAT12/16/32
+- filesystems (whole disk, partitions, or LVM2 logical volumes): ext2/3/4, xfs, btrfs, NTFS, squashfs, ISO9660, UDF, exFAT, EROFS (uncompressed), FAT12/16/32
 - listing without extracting (`ls`), selective extraction (`cp`), metadata (`info`), single-file read to stdout (`cat`), hex header dump (`xxd`), full extraction (`extract`)
 - one binary, three interfaces: CLI, HTTP (REST + OpenAPI), MCP tools
 - config YAML export

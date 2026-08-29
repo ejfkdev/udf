@@ -9,6 +9,7 @@ import (
 
 	"github.com/ejfkdev/udf/fsview"
 	appi18n "github.com/ejfkdev/udf/i18n"
+	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/layer"
 	"github.com/ejfkdev/udf/types"
 )
@@ -16,7 +17,7 @@ import (
 // BuildFileSystem merges all layers of the image into an in-memory tree
 // without writing anything to disk.
 func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.Node, error) {
-	archive, err := openArchive(imageTarPath)
+	archive, err := arch.Open(imageTarPath)
 	if err != nil {
 		return nil, err
 	}

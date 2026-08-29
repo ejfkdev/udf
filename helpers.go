@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ejfkdev/udf/image"
+	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/types"
 )
 
@@ -90,7 +91,7 @@ func filterArchives(paths []string) ([]string, error) {
 // archive/disk image, a glob, a directory of such files, or an OCI image layout
 // directory (which is treated as one image, not a batch directory).
 func resolveDiskOrArchiveInputs(input string) ([]string, error) {
-	if image.IsOCILayout(input) {
+	if arch.IsOCILayout(input) {
 		return []string{input}, nil
 	}
 	return resolveInputs([]string{input})
