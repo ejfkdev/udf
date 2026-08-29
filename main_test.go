@@ -143,6 +143,33 @@ func TestInfoImage(t *testing.T) {
 	}
 }
 
+func TestIsSupportedArchive(t *testing.T) {
+	write := func(pref []byte) string {
+		p := filepath.Join(t.TempDir(), "input.bin")
+		if err := os.WriteFile(p, pref, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	for name, p := range map[string]string{
+		"gzip":  write([]byte{0x1f, 0x8b}),
+		"zip":   write([]byte("PK\x03\x04")),
+		"7z":    write([]byte("7z\xbc\xaf\x27\x1c")),
+		"rar":   write([]byte("Rar!\x1a\x07\x00")),
+		"cpio":  write([]byte("070701")),
+		"qcow2": write([]byte("QFI\xfb")),
+		"vmdk":  write([]byte("KDMV")),
+		"wim":   write([]byte("MSWIM\x00\x00\x00")),
+	} {
+		if !isSupportedArchive(p) {
+			t.Fatalf("expected content %q to be a supported input", name)
+		}
+	}
+	if isSupportedArchive(write([]byte("this is plain text\n"))) {
+		t.Fatalf("plain text should not be a supported input")
+	}
+}
+
 func TestListImageAppliesWhiteout(t *testing.T) {
 	imagePath := writeTestImage(t)
 
@@ -193,6 +220,173 @@ func TestCopyEntryExtractsSingleFile(t *testing.T) {
 	}
 	if string(data) != "root:x:0:0" {
 		t.Fatalf("unexpected content: %q", string(data))
+	}
+}
+
+func TestCatEntryStreamsToStdout(t *testing.T) {
+	imagePath := writeTestImage(t)
+
+	capture := filepath.Join(t.TempDir(), "cat.out")
+	f, err := os.Create(capture)
+	if err != nil {
+		t.Fatalf("create stdout capture: %v", err)
+	}
+
+	old := os.Stdout
+	os.Stdout = f
+	resp, herr := catEntry(context.Background(), &CatArgs{
+		Archive: imagePath, Source: "/etc/passwd", BufferSize: 1 << 16,
+	})
+	os.Stdout = old
+	if err := f.Close(); err != nil {
+		t.Fatalf("close stdout capture: %v", err)
+	}
+
+	if herr != nil {
+		t.Fatalf("cat: %v", herr)
+	}
+	if resp != nil {
+		t.Fatalf("cat must return a nil result so the CLI adds no framing, got %v", resp)
+	}
+
+	data, err := os.ReadFile(capture)
+	if err != nil {
+		t.Fatalf("read stdout capture: %v", err)
+	}
+	// /etc/passwd in the fixture has no trailing newline; cat must reproduce
+	// the exact bytes without appending one (unlike the CLI's string Render).
+	if want := []byte("root:x:0:0"); !bytes.Equal(data, want) {
+		t.Fatalf("stdout bytes mismatch: got %q want %q", data, want)
+	}
+}
+
+func TestCatEntryNotFoundKind(t *testing.T) {
+	imagePath := writeTestImage(t)
+
+	_, err := catEntry(context.Background(), &CatArgs{
+		Archive: imagePath, Source: "/nosuch", BufferSize: 1 << 16,
+	})
+	if err == nil {
+		t.Fatal("expected not-found error")
+	}
+	if got := errs.Classify(err); got != errs.KindNotFound {
+		t.Fatalf("unexpected error kind: %v", got)
+	}
+}
+
+func TestHexDumpFormat(t *testing.T) {
+	got := hexDump([]byte{0x4d, 0x5a, 0x00, 0x41, 0xff}, 0)
+	want := "00000000:" + " 4d 5a 00 41 ff" + strings.Repeat("   ", 11) + "  " + "MZ.A."
+	if got != want {
+		t.Fatalf("unexpected hex dump:\ngot  %q\nwant %q", got, want)
+	}
+}
+
+func TestHexDumpMultipleLinesAndOffset(t *testing.T) {
+	data := make([]byte, 20)
+	for i := range data {
+		data[i] = byte('A' + i)
+	}
+	got := hexDump(data, 0x40)
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 dump lines, got %d:\n%s", len(lines), got)
+	}
+	if !strings.HasPrefix(lines[0], "00000040:") {
+		t.Fatalf("first line should start at the base offset, got %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "00000050:") {
+		t.Fatalf("second line should continue at +16, got %q", lines[1])
+	}
+}
+
+func TestXxdEntryHexDumps(t *testing.T) {
+	imagePath := writeTestImage(t)
+
+	out, err := xxdEntry(context.Background(), &XxdArgs{
+		Archive: imagePath, Source: "/etc/passwd", Bytes: 256, Offset: 0,
+	})
+	if err != nil {
+		t.Fatalf("xxd: %v", err)
+	}
+	if !strings.HasPrefix(out, "00000000:") {
+		t.Fatalf("dump should start with offset 00000000:, got %q", out)
+	}
+	if !strings.Contains(out, "72 6f 6f 74") { // hex of "root"
+		t.Fatalf("dump should contain hex of 'root', got:\n%s", out)
+	}
+	if !strings.Contains(out, "root:x:0:0") { // ASCII gutter
+		t.Fatalf("dump should contain the ASCII gutter, got:\n%s", out)
+	}
+}
+
+func TestXxdEntryRespectsBytesAndOffset(t *testing.T) {
+	imagePath := writeTestImage(t)
+
+	out, err := xxdEntry(context.Background(), &XxdArgs{
+		Archive: imagePath, Source: "/etc/passwd", Bytes: 4, Offset: 4,
+	})
+	if err != nil {
+		t.Fatalf("xxd: %v", err)
+	}
+	// passwd is "root:x:0:0"; offset 4 + 4 bytes = ":x:0".
+	if !strings.HasPrefix(out, "00000004:") {
+		t.Fatalf("dump should start at offset 00000004, got %q", out)
+	}
+	if !strings.Contains(out, ":x:0") {
+		t.Fatalf("dump should contain ':x:0' from offset 4, got:\n%s", out)
+	}
+}
+
+func TestXxdEntryNotFoundKind(t *testing.T) {
+	imagePath := writeTestImage(t)
+
+	_, err := xxdEntry(context.Background(), &XxdArgs{
+		Archive: imagePath, Source: "/nosuch", Bytes: 256,
+	})
+	if err == nil {
+		t.Fatal("expected not-found error")
+	}
+	if got := errs.Classify(err); got != errs.KindNotFound {
+		t.Fatalf("unexpected error kind: %v", got)
+	}
+}
+
+func TestXxdEntryInvalidArgs(t *testing.T) {
+	imagePath := writeTestImage(t)
+
+	for _, args := range []XxdArgs{
+		{Archive: imagePath, Source: "/etc/passwd", Bytes: 0},
+		{Archive: imagePath, Source: "/etc/passwd", Bytes: 256, Offset: -1},
+	} {
+		if _, err := xxdEntry(context.Background(), &args); errs.Classify(err) != errs.KindInvalidInput {
+			t.Fatalf("expected invalid-input error for %+v, got %v", args, err)
+		}
+	}
+}
+
+func TestXxdEntryOffsetBeyondEOFIsEmpty(t *testing.T) {
+	imagePath := writeTestImage(t)
+
+	out, err := xxdEntry(context.Background(), &XxdArgs{
+		Archive: imagePath, Source: "/etc/passwd", Bytes: 256, Offset: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("xxd beyond EOF should not error: %v", err)
+	}
+	if out != "" {
+		t.Fatalf("expected empty dump beyond EOF, got %q", out)
+	}
+}
+
+func TestCatEntryInvalidBuffer(t *testing.T) {
+	imagePath := writeTestImage(t)
+
+	_, err := catEntry(context.Background(), &CatArgs{
+		Archive: imagePath, Source: "/etc/passwd", BufferSize: 0,
+	})
+	if got := errs.Classify(err); got != errs.KindInvalidInput {
+		t.Fatalf("unexpected error kind: %v", got)
 	}
 }
 
@@ -261,6 +455,8 @@ func TestHelpBlocksCarryMetaInfo(t *testing.T) {
 		"示例:",
 		"udf ls ./image.tar /etc",
 		"udf cp ./image.tar /etc/passwd ./passwd",
+		"udf cat ./image.tar /etc/passwd",
+		"udf xxd ./image.tar /etc/passwd",
 		"udf serve --addr 127.0.0.1:8080",
 		"udf mcp stdio",
 	} {
@@ -300,6 +496,19 @@ func TestHelpBlocksCarryMetaInfo(t *testing.T) {
 	for _, want := range []string{"extract is the default command", "put flags after the archive path"} {
 		if !strings.Contains(en.extractAfter, want) {
 			t.Errorf("en extract help After block missing %q:\n%s", want, en.extractAfter)
+		}
+	}
+
+	// The footer now also lists the supported input formats.
+	if after := helpAfterBlock(langx.ZhCn); !strings.Contains(after, "支持的输入") || !strings.Contains(after, "qcow2") || !strings.Contains(after, "内置选项") {
+		t.Errorf("zh helpAfter block missing formats/options:\n%s", after)
+	}
+	if after := helpAfterBlock(langx.En); !strings.Contains(after, "Supported inputs") || !strings.Contains(after, "qcow2") || !strings.Contains(after, "Built-in options") {
+		t.Errorf("en helpAfter block missing formats/options:\n%s", after)
+	}
+	for _, want := range []string{"qed", "wim", "erofs", "LVM2"} {
+		if !strings.Contains(helpTextFor(langx.En).formats, want) {
+			t.Errorf("en formats missing %q:\n%s", want, helpTextFor(langx.En).formats)
 		}
 	}
 }

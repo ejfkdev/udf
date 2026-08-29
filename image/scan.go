@@ -16,6 +16,21 @@ type Selection struct {
 }
 
 func ScanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata, error) {
+	key := cacheKeyFor(imageTarPath, "imgmeta", fmt.Sprintf("%d\x00%s", sel.ImageIndex, sel.RepoTag))
+	var cached types.ImageMetadata
+	if loadCachedJSON(key, &cached) {
+		return &cached, nil
+	}
+
+	meta, err := scanImageMetadata(imageTarPath, sel)
+	if err != nil {
+		return nil, err
+	}
+	storeCachedJSON(key, meta)
+	return meta, nil
+}
+
+func scanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata, error) {
 	archive, err := openArchive(imageTarPath)
 	if err != nil {
 		return nil, err

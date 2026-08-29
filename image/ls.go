@@ -32,6 +32,32 @@ func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.No
 	return fsview.Build(meta.LayerOrder, openLayer)
 }
 
+// ListArchive lists the directory (or single file) at treePath inside an
+// archive image, caching the result so repeated listings skip re-scanning the
+// archive and re-building the merged filesystem tree.
+func ListArchive(imageTarPath string, sel Selection, treePath string) ([]FileEntry, error) {
+	key := cacheKeyFor(imageTarPath, "arls", fmt.Sprintf("%d\x00%s", sel.ImageIndex, sel.RepoTag), treePath)
+	var cached []FileEntry
+	if loadCachedJSON(key, &cached) {
+		return cached, nil
+	}
+
+	meta, err := ScanImageMetadata(imageTarPath, sel)
+	if err != nil {
+		return nil, err
+	}
+	tree, err := BuildFileSystem(imageTarPath, meta)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := ListEntries(tree, treePath)
+	if err != nil {
+		return nil, err
+	}
+	storeCachedJSON(key, entries)
+	return entries, nil
+}
+
 // FormatListing renders the merged image filesystem at target the way
 // `ls -al` would: one long-format line per entry, plus a total block line
 // for directories. target "" or "/" lists the image root.
@@ -156,6 +182,7 @@ type FileEntry struct {
 	Size    int64     `json:"size"`
 	ModTime time.Time `json:"mod_time"`
 	Target  string    `json:"target,omitempty"`
+	FSType  string    `json:"fs_type,omitempty"` // filesystem of a disk/volume row
 }
 
 // ListEntries resolves target inside the merged tree and returns every entry

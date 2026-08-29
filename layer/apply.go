@@ -4,8 +4,8 @@ import (
 	"archive/tar"
 	"bufio"
 	"compress/bzip2"
-	"compress/gzip"
 	"fmt"
+	"github.com/klauspost/compress/gzip"
 	"io"
 
 	"github.com/ejfkdev/udf/fsutil"

@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/github/license/ejfkdev/udf)](./LICENSE)
 [![release](https://github.com/ejfkdev/udf/actions/workflows/release.yml/badge.svg)](https://github.com/ejfkdev/udf/actions/workflows/release.yml)
 
-`udf` is a Go CLI tool that extracts Harbor / Docker image archives into a merged root filesystem (`rootfs`).
+`udf` is a Go CLI tool that extracts content from archives, virtual disk images and filesystem images, and lists (or merges into a single `rootfs`) image filesystems.
 
 One binary speaks two faces: a traditional CLI and a networked agent. Every command is defined once ([xyz-go](https://github.com/ejfkdev/xyz-go)) and automatically available as a **CLI subcommand**, an **HTTP REST route** (with an OpenAPI document) and an **MCP tool**. All inputs are **local file paths on the machine running udf** — nothing is uploaded; the operation always happens where the program runs.
 
@@ -39,8 +39,9 @@ Three interfaces, one definition:
 Archive handling:
 
 - Extract image archives into a merged `rootfs`
-- Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.zip`
-- Common image layouts: flat `manifest.json + config.json + layers/...` and classic `docker save` (`<layer-id>/layer.tar`)
+- Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.zip`, `.7z`, `.rar`, `.cpio` (and `.ppkg` Windows provisioning packages, an OPC/ZIP)
+- Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami`, OVA, OVF, VMA, SIF (ext4/xfs/squashfs/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes)
+- Common image layouts: flat `manifest.json + config.json + layers/...`, classic `docker save` (`<layer-id>/layer.tar`), and OCI image layout directories
 - Input may be a single archive, a glob pattern, or a directory (top level scanned)
 
 Extraction correctness:
@@ -56,12 +57,67 @@ Inspection:
 - List merged contents without extracting (`udf ls`, `ls -al`-style information both as a CLI table and as structured JSON)
 - Extract a single file or directory only (`udf cp`)
 - Show image metadata: tags, layers, working dir, entrypoint (`udf info`)
+- Write a single file's raw bytes to stdout, pipe-friendly (`udf cat`)
+- Hex-dump the first bytes of a file to inspect its header (`udf xxd`)
 
 Convenience:
 
 - Export `config.json` as readable `config.yaml`
 - One error taxonomy: CLI exit code, HTTP status and MCP error code stay aligned
 - Importable as a Go library
+
+### Containers and disk images
+
+Beyond container layer archives, `udf` can open a virtual disk image and extract
+a filesystem through the same commands. `info`, `ls`, `cp` and `extract` detect
+disk inputs automatically:
+
+```text
+./udf info ./disk.qcow2                        # list disks, volumes + filesystems
+./udf ls ./disk.qcow2                          # list the volumes (partitions + LVs)
+./udf ls ./disk.qcow2 /vg1/root                # list a volume's root directory
+./udf ls ./disk.qcow2 /vg1/root/etc            # list /etc inside a volume
+./udf cp ./disk.qcow2 /vg1/root/etc/hostname ./hostname
+./udf extract ./disk.qcow2                     # extract every filesystem volume
+./udf ls ./appliance.ova                       # list the vmdk disks in an OVA
+./udf ls ./appliance.ova /disk1.vmdk           # then its volumes
+```
+
+Supported disk container formats:
+
+- **qcow2** (v2/v3), read-only and streamed
+- **VMDK** sparse extents — both monolithicSparse (flat or deflate) and
+  streamOptimized
+- **OVA** archives (a tar of an OVF descriptor plus one or more `.vmdk` disks)
+- **OVF** standalone descriptors (`.ovf` referencing sibling `.vmdk` disks)
+- **VHD/VHDX** virtual disks (fixed, dynamic and differencing)
+- **QED** QEMU Enhanced Disk images (two-level page table; little-endian)
+- **QCOW v1** legacy QEMU disk images (two-level page table; compressed clusters)
+- **WIM** Windows imaging files (the first image; XPRESS and LZX compression)
+- **ESD** Windows "Electronic Software Download" files (WIM with LZMS compression)
+- **SWM** split WIM images (the first part; sibling `*.swm2/3/…` parts are read automatically)
+- **FFU** Full Flash Update images (locates the embedded disk by scanning past the security header — heuristic, not validated against a real Microsoft FFU)
+- **VMA** Proxmox vzdump archives (one or more raw disks)
+- **SIF** Singularity container images (the system partition is extracted)
+- **VDI** VirtualBox disk images
+- **Parallels** disk images (`.parallels`/`.hds`)
+- **raw** disk and filesystem images (`.img`/`.raw`/`.dd`/`.ext4`/`.xfs`, …) — bytes are the device itself
+
+The virtual disk is addressed as a path tree: `/` lists disks (for a multi-disk
+OVA) or volumes, `/<volume>` enters a volume, and the rest is a path inside it.
+Volumes are named `p1`…`pN` for partitions and `vg/lv` for LVM logical volumes.
+
+- MBR/GPT partition tables are parsed, plus LVM2 physical volumes in-process:
+  each logical volume is exposed as a selectable volume, in addition to plain
+  partitions
+- Filesystems supported for extraction are **ext4**, **xfs**, **squashfs**, **ISO9660**, **UDF**, **exFAT**, **EROFS** and **FAT** (fat12/16/32)
+- When a disk holds several filesystems, `ls` and `cp` require a volume prefix
+  (or start from `/` and descend); a single filesystem volume is used
+  implicitly, so `./udf ls img.qcow2 /etc` still works for simple images
+- `extract` writes every filesystem volume; with several, each lands in its own
+  subdirectory named after the volume
+- Regular files, directories and symlinks are recreated; hardlinks become
+  independent copies, and device nodes, FIFOs and sockets are skipped
 
 ## Interfaces
 
@@ -81,7 +137,7 @@ curl -s http://127.0.0.1:8080/openapi.json
 ./udf mcp http --addr 127.0.0.1:9000 --bearer s3cret
 ```
 
-Route overview: `GET /info?archive=…`, `GET /ls?archive=…&path=…`, `POST /cp`, `POST /extract`, plus `/healthz` and `/openapi.json`.
+Route overview: `GET /info?archive=…`, `GET /ls?archive=…&path=…`, `POST /cp`, `GET /cat?archive=…&source=…`, `GET /xxd?archive=…&source=…`, `POST /extract`, plus `/healthz` and `/openapi.json`.
 
 In MCP clients, register udf as a stdio server:
 
@@ -148,7 +204,7 @@ Built-in conveniences: `-h` per-command help, `-v` version, `--json` for machine
 
 Every command takes **one input expression** for the archive:
 
-- a single archive file — required by `info`, `ls` and `cp`
+- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`) — required by `info`, `ls` and `cp`
 - a glob pattern, or a directory (top level scanned, not recursive) — `extract` also accepts these and expands them into a batch
 
 Examples:
@@ -216,6 +272,28 @@ Destination semantics mirror `cp`:
 - Extracting `/` (the image root) puts the contents directly into `<dest>`
 - Whiteout-processed entries are skipped, symlinks are recreated as symlinks, and hardlinks are preserved when the source stays inside the selection (content is copied otherwise)
 
+### `cat` — write a single file to stdout
+
+Like the OS `cat`, `udf cat` streams one file's raw bytes to stdout (binary-safe, no trailing newline), so it can be piped into other programs:
+
+```bash
+./udf cat ./image.tar /etc/passwd | grep root
+./udf cat ./disk.qcow2 /p1/etc/hostname
+```
+
+Symlinks and hardlinks inside the image are followed to their target file. Prefer `cat` for small text files; for large or binary files use `xxd` to preview a bounded prefix instead of dumping everything.
+
+### `xxd` — hex-dump a file header
+
+Like `xxd -l N` / `hexdump -C`, `udf xxd` prints the first bytes of a file as hex + ASCII so you can identify it by its header:
+
+```bash
+./udf xxd ./image.tar /etc/passwd                        # first 256 bytes
+./udf xxd ./image.tar /etc/passwd -n 64 -s 4096          # 64 bytes, skipping 4096
+```
+
+`-n/--bytes` sets the byte count (default 256) and `-s/--offset` skips bytes from the start before dumping.
+
 ### `extract` — extract the merged rootfs
 
 ```bash
@@ -265,6 +343,8 @@ Command flags:
 - `-o, --output` — output parent directory (`extract`)
 - `-f, --force` — write into an existing non-empty target directory (`extract`)
 - `-b, --buffer-size` — file copy buffer size in bytes (`cp`, `extract`)
+- `-n, --bytes` — number of bytes to dump (`xxd`, default 256)
+- `-s, --offset` — skip this many bytes from the start before dumping (`xxd`)
 
 Built-in flags come from xyz-go: `-h/--help`, `-v/--version`, `--json`, `--xyz.lang en|zh-CN` (interface language, defaults to `LANG`/`LC_ALL` detection), and `completion bash|zsh|fish`. The `serve` and `mcp` modes add `--addr`, `--bearer`, `--cors`, `--tls-cert`/`--tls-key`, `--timeout`, `--log-level` (plus `--versions` and `--session-timeout` for `mcp`) — details in the [xyz-go README](https://github.com/ejfkdev/xyz-go).
 
@@ -314,6 +394,8 @@ Batch `extract` keeps going after one archive fails: failures land in the row's 
 ## Known Limitations
 
 - zstd-compressed inner layers are not supported and fail with an explicit error
+- A disk image must contain a supported filesystem (ext4/xfs/squashfs/ISO9660/UDF/exFAT/EROFS/FAT) (whole disk, partitions, or LVM2 logical volumes); foreign filesystems such as btrfs are reported by `info` but not extracted
+- Disk extraction recreates regular files, directories and symlinks; file ownership is not preserved (files are written as the current user)
 - Directory input only scans the top level and is not recursive
 - Multi-image archives require an explicit `-t`/`-i` selection; `udf` never prompts interactively
 - One input expression per command; use a directory or a glob for batches
@@ -378,10 +460,17 @@ Selection and not-found errors implement `*i18n.LocalizedError` with a stable
 
 ## Current Scope
 
+`udf` is a general "extract the contents of an encapsulation format" tool: it
+detects the input by its content (magic bytes), not its extension, and opens it
+through one of three pipelines — an archive, a virtual disk container, or a raw
+filesystem image.
+
 Supported:
 
-- offline image archive extraction, batch via directory or glob
-- listing merged image contents without extracting (`ls`), selective extraction (`cp`), metadata (`info`)
+- archive extraction (tar, tar.gz/tgz, zip, 7z, rar, cpio, OCI layout, `docker save`), batch via directory or glob
+- disk / VM images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM/ESD/SWM, FFU, VMA, SIF, OVA/OVF, raw/`.img`/`.ami`
+- filesystems (whole disk, partitions, or LVM2 logical volumes): ext2/3/4, xfs, squashfs, ISO9660, UDF, exFAT, EROFS (uncompressed), FAT12/16/32
+- listing without extracting (`ls`), selective extraction (`cp`), metadata (`info`), single-file read to stdout (`cat`), hex header dump (`xxd`), full extraction (`extract`)
 - one binary, three interfaces: CLI, HTTP (REST + OpenAPI), MCP tools
 - config YAML export
 - importable as a Go library

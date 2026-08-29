@@ -3,12 +3,15 @@ package image
 import (
 	"archive/tar"
 	"archive/zip"
-	"compress/gzip"
 	"fmt"
+	"github.com/klauspost/compress/gzip"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+
+	"github.com/bodgit/sevenzip"
+	"github.com/cavaliergopher/cpio"
+	"github.com/nwaples/rardecode/v2"
 )
 
 type archiveEntry struct {
@@ -22,14 +25,27 @@ type imageArchive interface {
 }
 
 func openArchive(path string) (imageArchive, error) {
-	lower := strings.ToLower(path)
-	switch {
-	case strings.HasSuffix(lower, ".tar"):
+	if IsOCILayout(path) {
+		return openOCIArchive(path)
+	}
+	format, err := detectArchive(path)
+	if err != nil {
+		return nil, err
+	}
+	switch format {
+	case "tar":
 		return &tarArchive{path: path, gzipped: false}, nil
-	case strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"):
+	case "tar.gz":
 		return &tarArchive{path: path, gzipped: true}, nil
-	case strings.HasSuffix(lower, ".zip"):
+	case "zip":
+		// .ppkg (Windows provisioning package) is an OPC container: a ZIP.
 		return &zipArchive{path: path}, nil
+	case "7z":
+		return &sevenzipArchive{path: path}, nil
+	case "cpio":
+		return &cpioArchive{path: path}, nil
+	case "rar":
+		return &rarArchive{path: path}, nil
 	default:
 		return nil, fmt.Errorf("unsupported archive format: %s", filepath.Base(path))
 	}
@@ -179,4 +195,133 @@ func (r *zipEntryReadCloser) Close() error {
 		r.closeZip()
 	}
 	return err
+}
+
+type sevenzipArchive struct {
+	path string
+}
+
+func (a *sevenzipArchive) List() ([]archiveEntry, error) {
+	zr, err := sevenzip.OpenReader(a.path)
+	if err != nil {
+		return nil, err
+	}
+	defer zr.Close()
+
+	entries := make([]archiveEntry, 0, len(zr.File))
+	for _, f := range zr.File {
+		entries = append(entries, archiveEntry{
+			Name: f.Name,
+			Size: int64(f.UncompressedSize),
+		})
+	}
+	return entries, nil
+}
+
+func (a *sevenzipArchive) Open(name string) (io.ReadCloser, int64, error) {
+	zr, err := sevenzip.OpenReader(a.path)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, f := range zr.File {
+		if f.Name != name {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			_ = zr.Close()
+			return nil, 0, err
+		}
+		return &zipEntryReadCloser{
+			ReadCloser: rc,
+			closeZip:   func() { _ = zr.Close() },
+		}, int64(f.UncompressedSize), nil
+	}
+	_ = zr.Close()
+	return nil, 0, fmt.Errorf("entry %s not found in archive", name)
+}
+
+type cpioArchive struct {
+	path string
+}
+
+func (a *cpioArchive) List() ([]archiveEntry, error) {
+	f, err := os.Open(a.path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	cr := cpio.NewReader(f)
+	var entries []archiveEntry
+	for {
+		hdr, err := cr.Next()
+		if err == io.EOF {
+			return entries, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read cpio entry: %w", err)
+		}
+		entries = append(entries, archiveEntry{Name: hdr.Name, Size: hdr.Size})
+	}
+}
+
+func (a *cpioArchive) Open(name string) (io.ReadCloser, int64, error) {
+	f, err := os.Open(a.path)
+	if err != nil {
+		return nil, 0, err
+	}
+	cr := cpio.NewReader(f)
+	for {
+		hdr, err := cr.Next()
+		if err == io.EOF {
+			_ = f.Close()
+			return nil, 0, fmt.Errorf("entry %s not found in archive", name)
+		}
+		if err != nil {
+			_ = f.Close()
+			return nil, 0, fmt.Errorf("read cpio entry: %w", err)
+		}
+		if hdr.Name != name {
+			continue
+		}
+		return &tarEntryReadCloser{
+			Reader:  cr,
+			closeFn: func() { _ = f.Close() },
+		}, hdr.Size, nil
+	}
+}
+
+type rarArchive struct {
+	path string
+}
+
+func (a *rarArchive) List() ([]archiveEntry, error) {
+	files, err := rardecode.List(a.path)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]archiveEntry, 0, len(files))
+	for _, f := range files {
+		entries = append(entries, archiveEntry{Name: f.Name, Size: f.UnPackedSize})
+	}
+	return entries, nil
+}
+
+func (a *rarArchive) Open(name string) (io.ReadCloser, int64, error) {
+	files, err := rardecode.List(a.path)
+	if err != nil {
+		return nil, 0, err
+	}
+	for _, f := range files {
+		if f.Name != name {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, 0, err
+		}
+		return &zipEntryReadCloser{ReadCloser: rc, closeZip: func() {}}, f.UnPackedSize, nil
+	}
+	return nil, 0, fmt.Errorf("entry %s not found in archive", name)
 }

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ejfkdev/udf/image"
 	"github.com/ejfkdev/udf/types"
 )
 
@@ -85,16 +86,24 @@ func filterArchives(paths []string) ([]string, error) {
 	return filtered, nil
 }
 
+// resolveDiskOrArchiveInputs resolves an extract input expression: a single
+// archive/disk image, a glob, a directory of such files, or an OCI image layout
+// directory (which is treated as one image, not a batch directory).
+func resolveDiskOrArchiveInputs(input string) ([]string, error) {
+	if image.IsOCILayout(input) {
+		return []string{input}, nil
+	}
+	return resolveInputs([]string{input})
+}
+
 func hasGlob(s string) bool {
 	return strings.ContainsAny(s, "*?[")
 }
 
+// isSupportedArchive reports whether path is a recognized input, determined by
+// file content (magic) rather than extension.
 func isSupportedArchive(path string) bool {
-	lower := strings.ToLower(path)
-	return strings.HasSuffix(lower, ".tar") ||
-		strings.HasSuffix(lower, ".tar.gz") ||
-		strings.HasSuffix(lower, ".tgz") ||
-		strings.HasSuffix(lower, ".zip")
+	return image.DetectInput(path) != ""
 }
 
 func resolveOutputDir(imagePath, parentDir string, meta *types.ImageMetadata) string {
@@ -166,6 +175,18 @@ func imageBaseName(imagePath string) string {
 		base = base[:len(base)-len(".tgz")]
 	case strings.HasSuffix(lower, ".zip"):
 		base = base[:len(base)-len(".zip")]
+	case strings.HasSuffix(lower, ".qcow2"):
+		base = base[:len(base)-len(".qcow2")]
+	case strings.HasSuffix(lower, ".vmdk"):
+		base = base[:len(base)-len(".vmdk")]
+	case strings.HasSuffix(lower, ".vhd"):
+		base = base[:len(base)-len(".vhd")]
+	case strings.HasSuffix(lower, ".vhdx"):
+		base = base[:len(base)-len(".vhdx")]
+	case strings.HasSuffix(lower, ".ova"):
+		base = base[:len(base)-len(".ova")]
+	case strings.HasSuffix(lower, ".vma"):
+		base = base[:len(base)-len(".vma")]
 	default:
 		base = strings.TrimSuffix(base, filepath.Ext(base))
 	}

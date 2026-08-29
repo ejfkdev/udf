@@ -3,7 +3,7 @@
 [![license](https://img.shields.io/github/license/ejfkdev/udf)](./LICENSE)
 [![release](https://github.com/ejfkdev/udf/actions/workflows/release.yml/badge.svg)](https://github.com/ejfkdev/udf/actions/workflows/release.yml)
 
-`udf` 是一个 Go 编写的命令行工具，用于将 Harbor / Docker 导出的镜像归档解包为合并后的根文件系统（`rootfs`）。
+`udf` 是一个 Go 编写的命令行工具，用于从归档、虚拟磁盘镜像与文件系统镜像中提取内容，并列出（或合并为单一 `rootfs`）镜像文件系统。
 
 一个二进制提供三种接口：每个命令只定义一次（基于 [xyz-go](https://github.com/ejfkdev/xyz-go)），自动同时具备 **CLI 子命令**、**HTTP REST 路由**（自带 OpenAPI 文档）和 **MCP 工具**三种形态。所有输入都是**运行 udf 的机器上的本地文件路径**——不涉及文件上传，操作始终发生在程序所在的机器上。
 
@@ -39,8 +39,9 @@ English version: [README.md](./README.md)
 归档处理：
 
 - 将镜像归档解包为合并后的 `rootfs`
-- 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.zip`
-- 支持常见镜像归档结构：平铺结构 `manifest.json + config.json + layers/...` 与经典 `docker save` 结构 `<layer-id>/layer.tar`
+- 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.zip`、`.7z`、`.rar`、`.cpio`（以及 `.ppkg` Windows 预配包，OPC/ZIP）
+- 虚拟磁盘镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM、ESD、SWM、FFU、raw/`.img`/`.ami`、OVA、OVF、VMA、SIF（ext4/xfs/squashfs/ISO9660/UDF/exFAT/EROFS/FAT，含 LVM2 逻辑卷）
+- 支持常见镜像归档结构：平铺结构 `manifest.json + config.json + layers/...`、经典 `docker save` 结构 `<layer-id>/layer.tar`，以及 OCI 镜像布局目录
 - 输入可以是单个归档、通配符模式或目录（只扫描一层）
 
 合并正确性：
@@ -56,12 +57,56 @@ English version: [README.md](./README.md)
 - 不解压即可列出镜像目录内容（`udf ls`，CLI 表格与结构化 JSON 同源）
 - 不解包整个镜像即可单独提取某个文件或目录（`udf cp`）
 - 查看镜像元数据：标签、层、工作目录、入口命令（`udf info`）
+- 将单个文件的原生字节输出到 stdout，可直接接管道（`udf cat`）
+- 以十六进制预览文件头几个字节、判断文件类型（`udf xxd`）
 
 其他：
 
 - 将原始 `config.json` 导出为可读性更高的 `config.yaml`
 - 一套错误分类同时映射 CLI 退出码、HTTP 状态码与 MCP 错误码
 - 可作为 Go 库引用
+
+### 容器与磁盘镜像
+
+除容器分层归档外，`udf` 也可以打开虚拟磁盘镜像，并通过同一组命令解出其中的文件系统。`info`、`ls`、`cp`、`extract` 都会自动识别磁盘输入：
+
+```text
+./udf info ./disk.qcow2                          # 列出磁盘、卷与文件系统
+./udf ls ./disk.qcow2                            # 列出卷（分区 + 逻辑卷）
+./udf ls ./disk.qcow2 /vg1/root                  # 列出某卷的根目录
+./udf ls ./disk.qcow2 /vg1/root/etc              # 列出某卷内的 /etc
+./udf cp ./disk.qcow2 /vg1/root/etc/hostname ./hostname
+./udf extract ./disk.qcow2                       # 解出所有文件系统卷
+./udf ls ./appliance.ova                         # 列出 OVA 内的 vmdk 磁盘
+./udf ls ./appliance.ova /disk1.vmdk             # 再列出该磁盘的卷
+```
+
+支持的磁盘容器格式：
+
+- **qcow2**（v2/v3），只读流式
+- **VMDK** sparse 盘——monolithicSparse（flat 或 deflate）与 streamOptimized 均支持
+- **OVA** 归档（包含 OVF 描述 + 一个或多个 `.vmdk` 磁盘的 tar）
+- **OVF** 独立描述符（`.ovf` 引用同目录 `.vmdk` 磁盘）
+- **VHD/VHDX** 虚拟磁盘（fixed、dynamic、differencing）
+- **QED** QEMU Enhanced Disk 镜像（二级页表；小端序）
+- **QCOW v1** 传统 QEMU 磁盘镜像（二级页表；压缩簇）
+- **WIM** Windows 镜像文件（取第一个 image；XPRESS 与 LZX 压缩）
+- **ESD** Windows「电子软件下载」文件（WIM 的 LZMS 压缩形态）
+- **SWM** 分卷 WIM 镜像（传第一个分卷，自动读取同目录 `*.swm2/3/…` 兄弟分卷）
+- **FFU** Full Flash Update 镜像（扫描跳过安全头定位内嵌磁盘——启发式，未对真实 Microsoft FFU 验证）
+- **VMA** Proxmox vzdump 归档（一个或多个 raw 磁盘）
+- **SIF** Singularity 容器镜像（解出其系统分区）
+- **VDI** VirtualBox 磁盘镜像
+- **Parallels** 磁盘镜像（`.parallels`/`.hds`）
+- **raw** 磁盘与文件系统镜像（`.img`/`.raw`/`.dd`/`.ext4`/`.xfs` 等）——文件本身即磁盘
+
+虚拟磁盘按「路径树」寻址：`/` 列出磁盘（多磁盘 OVA）或卷，`/<卷>` 进入某个卷，之后就是卷内路径。分区命名为 `p1`…`pN`，LVM 逻辑卷命名为 `vg/lv`。
+
+- 解析 MBR/GPT 分区表，并内置解析 LVM2 物理卷：每个逻辑卷都作为可选卷暴露，与普通分区并列
+- 可解出的文件系统为 **ext4**、**xfs**、**squashfs**、**ISO9660**、**UDF**、**exFAT**、**EROFS** 与 **FAT**（fat12/16/32）
+- 磁盘含多个文件系统时，`ls`/`cp` 需要带卷前缀（或从 `/` 逐层下钻）；只有一个文件系统卷时隐式使用该卷，所以 `./udf ls img.qcow2 /etc` 对简单镜像依然好用
+- `extract` 解出所有文件系统卷；卷多时每个卷落到以卷名命名的子目录
+- 普通文件、目录、软链接会原样重建；硬链接变为独立副本，设备节点、FIFO、套接字会被跳过
 
 ## 三种接口
 
@@ -81,7 +126,7 @@ curl -s http://127.0.0.1:8080/openapi.json
 ./udf mcp http --addr 127.0.0.1:9000 --bearer s3cret
 ```
 
-路由一览：`GET /info?archive=…`、`GET /ls?archive=…&path=…`、`POST /cp`、`POST /extract`，另有 `/healthz` 与 `/openapi.json`。
+路由一览：`GET /info?archive=…`、`GET /ls?archive=…&path=…`、`POST /cp`、`GET /cat?archive=…&source=…`、`GET /xxd?archive=…&source=…`、`POST /extract`，另有 `/healthz` 与 `/openapi.json`。
 
 在 MCP 客户端中，将 udf 注册为 stdio 服务：
 
@@ -148,7 +193,7 @@ go build -o udf .
 
 每个命令接收**一个输入表达式**作为归档：
 
-- 单个归档文件——`info`、`ls`、`cp` 要求此形式
+- 单个归档文件（`.tar`/`.tar.gz`/`.tgz`/`.zip`）或磁盘镜像（`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`）——`info`、`ls`、`cp` 要求此形式
 - 通配符模式或目录（只扫描一层，不递归）——`extract` 额外支持，并展开为批量处理
 
 示例：
@@ -216,6 +261,28 @@ passwd  file  -rw-r--r--  30    2026-08-22T00:04:25+08:00
 - 提取 `/`（镜像根）时，内容直接放入目标路径
 - 被 whiteout 删除的条目会被跳过；软链接原样重建；源在选择范围内的硬链接会保留为硬链接，否则复制内容
 
+### `cat` — 将单个文件输出到 stdout
+
+与系统 `cat` 一致：`udf cat` 把单个文件的原始字节以二进制形式流式写到 stdout（末尾不补换行），可直接接管道：
+
+```bash
+./udf cat ./image.tar /etc/passwd | grep root
+./udf cat ./disk.qcow2 /p1/etc/hostname
+```
+
+镜像内的软链接与硬链接会跟随到其目标文件。适合预览小型文本文件；大文件或二进制文件建议改用 `xxd` 预览前部有限字节，而不是整个打印到终端。
+
+### `xxd` — 以十六进制预览文件头
+
+与 `xxd -l N` / `hexdump -C` 一致：`udf xxd` 把文件头几个字节以「十六进制 + ASCII」形式打印，便于按文件头判断类型：
+
+```bash
+./udf xxd ./image.tar /etc/passwd                        # 默认前 256 字节
+./udf xxd ./image.tar /etc/passwd -n 64 -s 4096          # 跳过 4096 字节后取 64 字节
+```
+
+`-n/--bytes` 指定字节数（默认 256），`-s/--offset` 从文件起始跳过若干字节再开始。
+
 ### `extract` — 解包合并后的 rootfs
 
 ```bash
@@ -265,6 +332,8 @@ archive      output_dir                     layers  error
 - `-o, --output` — 输出父目录（`extract`）
 - `-f, --force` — 强制写入已存在的非空目标目录（`extract`）
 - `-b, --buffer-size` — 文件复制缓冲区大小，单位字节（`cp`、`extract`）
+- `-n, --bytes` — 要转储的字节数（`xxd`，默认 256）
+- `-s, --offset` — 从文件起始跳过多少字节再开始（`xxd`）
 
 内建参数来自 xyz-go：`-h/--help`、`-v/--version`、`--json`、`--xyz.lang en|zh-CN`（界面语言，默认跟随 `LANG`/`LC_ALL` 自动检测）与 `completion bash|zsh|fish`。`serve` 与 `mcp` 模式额外支持 `--addr`、`--bearer`、`--cors`、`--tls-cert`/`--tls-key`、`--timeout`、`--log-level`（`mcp` 另有 `--versions` 与 `--session-timeout`）——详见 [xyz-go README](https://github.com/ejfkdev/xyz-go)。
 
@@ -314,6 +383,8 @@ archive      output_dir                     layers  error
 ## 已知限制
 
 - 不支持 zstd 压缩的层（会明确报错）
+- 磁盘镜像必须包含受支持的文件系统（ext4/xfs/squashfs/ISO9660/UDF/exFAT/FAT）（整块磁盘、分区或 LVM2 逻辑卷）；btrfs 等其他文件系统 `info` 会列出但不会解出
+- 磁盘解包会重建普通文件、目录与软链接；不保留文件属主（文件以当前用户写入）
 - 目录输入只扫描当前一层，不递归子目录
 - 多镜像归档必须显式指定 `-t` / `-i`，程序不会交互式询问
 - 每个命令接收一个输入表达式；批量请使用目录或通配符
@@ -378,10 +449,14 @@ func main() {
 
 ## 当前范围
 
+`udf` 定位为通用的「从各种封装格式提取内容」工具：按文件内容（magic 字节）而非扩展名识别输入，并经由归档、虚拟磁盘容器或裸文件系统镜像三条管线之一打开。
+
 当前支持：
 
-- 离线镜像归档解包，目录/通配符批量
-- 不解压列出镜像目录内容（`ls`）、单独提取文件或目录（`cp`）、元数据查看（`info`）
+- 归档解包（tar、tar.gz/tgz、zip、7z、rar、cpio、OCI 布局、`docker save`），目录 / 通配符批量
+- 磁盘 / 虚拟机镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM/ESD/SWM、FFU、VMA、SIF、OVA/OVF、raw/`.img`/`.ami`
+- 文件系统（整块磁盘、分区或 LVM2 逻辑卷）：ext2/3/4、xfs、squashfs、ISO9660、UDF、exFAT、EROFS（未压缩）、FAT12/16/32
+- 不解压列出内容（`ls`）、单独提取（`cp`）、元数据（`info`）、单文件读 stdout（`cat`）、十六进制文件头（`xxd`）、整包解压（`extract`）
 - 一个二进制、三种接口：CLI、HTTP（REST + OpenAPI）、MCP 工具
 - `config.yaml` 导出
 - 可作为 Go 库引用
