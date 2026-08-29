@@ -97,32 +97,31 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download all artifacts
         uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
 
+      - name: Prepare release notes
+        run: |
+          awk 'BEGIN{c=0} /^## \[v/{c++} c==1{print}' CHANGELOG.md > release-notes.md
+          {
+            printf '\n## Installation\n\n### Download a prebuilt binary\n'
+            printf 'Choose the archive for your platform from the assets below.\n\n'
+            printf '### Go install\n\n```bash\n'
+            printf 'go install github.com/%s@%s\n' "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME"
+            printf '```\n\n### Notes\n\n'
+            printf -- '- Linux and macOS assets are packaged as `.tar.gz`\n'
+            printf -- '- Windows assets are packaged as `.zip`\n'
+            printf -- '- Each archive includes `README.md`, `README.zh-CN.md`, and `LICENSE`\n'
+          } >> release-notes.md
+
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
-          generate_release_notes: true
-          body: |
-            ## Installation
-
-            ### Download a prebuilt binary
-
-            Choose the archive for your platform from the assets below.
-
-            ### Go install
-
-            ```bash
-            go install github.com/${{ github.repository }}@${{ github.ref_name }}
-            ```
-
-            ### Notes
-
-            - Linux and macOS assets are packaged as `.tar.gz`
-            - Windows assets are packaged as `.zip`
-            - Each archive includes `README.md`, `README.zh-CN.md`, and `LICENSE`
+          body_path: release-notes.md
