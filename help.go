@@ -44,6 +44,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 		formats: `支持的输入（按文件内容识别，不靠扩展名）:
   归档:     tar / tar.gz(tgz) / tar.xz / tar.bz2 / tar.zst / tar.lz4 / zip / 7z / rar /
             cpio(cpio.gz/xz/zst，含 initramfs) / asar / rpm / deb(ipk) / cab / nar(nix) / xar(.pkg)，以及 OCI 布局 / OCI 归档(.oci.tar，含 flatpak) / docker save
+  可执行封装: pyinstaller(onefile，含 PYZ，重建 .pyc) / nuitka onefile(附加与内嵌载荷) /
+            .NET single-file(bundle v1/v2/v6，含 deflate) / zip 自解压 exe；APK 内二进制 AXML 自动解码为文本 XML
   虚拟磁盘: qcow2 / qcow1 / vmdk / vhd(vhdx) / vdi / qed / parallels / vma / ova(ovf) / sif / ffu /
             wim(esd/swm) / raw(img) / ami / appimage
   文件系统: ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs(未压缩) / fat12/16/32，含 LVM2 逻辑卷`,
@@ -81,6 +83,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 		formats: `Supported inputs (detected by content, not extension):
   archives:      tar / tar.gz (tgz) / tar.xz / tar.bz2 / tar.zst / tar.lz4 / zip / 7z / rar /
                  cpio (cpio.gz/xz/zst, incl. initramfs) / asar / rpm / deb (ipk) / cab / nar (nix) / xar (.pkg), plus OCI layouts, oci-archive tars (incl. flatpak) and docker save dirs
+  exe bundles:   pyinstaller (onefile, incl. PYZ, rebuilds .pyc) / nuitka onefile (appended and embedded payloads) /
+                 .NET single-file (bundle v1/v2/v6, incl. deflate) / zip self-extracting exes; binary AXML inside APKs is decoded to text XML
   disk images:   qcow2 / qcow1 / vmdk / vhd (vhdx) / vdi / qed / parallels / vma / ova (ovf) / sif / ffu /
                  wim (esd/swm) / raw (img) / ami / appimage
   filesystems:   ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs (uncompressed) / fat12/16/32,

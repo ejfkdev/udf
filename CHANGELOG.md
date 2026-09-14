@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.6.0] - 2026-09-14
+
+### Added
+
+- PyInstaller onefile executables (CArchive overlay, PyInstaller 2.0-6.x) are
+  now detected by content and can be listed and extracted like any other
+  archive: entry-point scripts and modules are rebuilt into valid `.pyc` files
+  (pyc header reconstruction, version-aware magic), and PYZ archives are
+  expanded under `<name>_extracted/` with the same layout pyinstxtractor
+  produces (verified byte-identical against its output)
+- Nuitka onefile executables: appended payloads (Windows/Linux, `KA`+`X`/`Y`
+  trailer format, both the ≤1.4 and 2.x entry layouts, UTF-16 names and
+  symlinks) and linker-embedded payloads (macOS, located by scanning and
+  validated by a full entry-stream parse); extraction verified byte-identical
+  against the original dist directory
+- .NET single-file applications (`PublishSingleFile`): bundle format v1/v2/v6
+  including deflate-compressed entries, located via the 32-byte apphost
+  signature
+- ZIP self-extracting executables: PE/ELF/Mach-O/shell hosts with a ZIP
+  overlay are detected via a tail EOCD scan and opened through the regular
+  zip path
+- Binary Android XML (AXML) inside APKs — `AndroidManifest.xml`, layouts and
+  other compiled resources — is decoded to readable text XML on listing,
+  `cat` and extraction (string pool UTF-8/UTF-16, namespaces, typed values
+  rendered apktool-style); enum/flag names that require the resource table
+  are printed as integers
+
+### Fixed
+
+- Character devices, block devices and FIFOs in image layers or archives
+  (e.g. `dev/console`, type `3` tar entries) no longer abort listing or
+  extraction with `unsupported tar entry type`; `ls` now renders them with
+  `c`/`b`/`p` mode prefixes and device numbers, and extraction skips them
+  (they cannot be recreated without privileges), matching the existing
+  disk-image path behaviour
+
 ## [v0.5.1] - 2026-08-29
 
 ### Fixed

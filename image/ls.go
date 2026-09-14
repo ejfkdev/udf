@@ -123,8 +123,13 @@ func formatLongLine(n *fsview.Node) string {
 		links = len(n.Children) + 2
 	}
 
-	return fmt.Sprintf("%s %3d %-8s %-8s %8d %s %s",
-		modeString(n), links, owner, group, size, formatModTime(n.ModTime), name)
+	sizeCol := fmt.Sprintf("%8d", size)
+	if fsview.IsDeviceKind(n.Kind) && n.Kind != fsview.KindFifo {
+		sizeCol = fmt.Sprintf("%8s", fmt.Sprintf("%d, %d", n.Devmajor, n.Devminor))
+	}
+
+	return fmt.Sprintf("%s %3d %-8s %-8s %s %s %s",
+		modeString(n), links, owner, group, sizeCol, formatModTime(n.ModTime), name)
 }
 
 func modeString(n *fsview.Node) string {
@@ -134,6 +139,12 @@ func modeString(n *fsview.Node) string {
 		b[0] = 'd'
 	case fsview.KindSymlink:
 		b[0] = 'l'
+	case fsview.KindCharDev:
+		b[0] = 'c'
+	case fsview.KindBlockDev:
+		b[0] = 'b'
+	case fsview.KindFifo:
+		b[0] = 'p'
 	case fsview.KindHardlink:
 		b[0] = '-'
 	default:
@@ -243,6 +254,12 @@ func kindName(kind fsview.Kind) string {
 		return "symlink"
 	case fsview.KindHardlink:
 		return "hardlink"
+	case fsview.KindCharDev:
+		return "chardev"
+	case fsview.KindBlockDev:
+		return "blockdev"
+	case fsview.KindFifo:
+		return "fifo"
 	default:
 		return "unknown"
 	}

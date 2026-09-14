@@ -68,6 +68,18 @@ func Detect(path string) (string, error) {
 	if isASAR(path) {
 		return "asar", nil
 	}
+	if isPyInstaller(path) {
+		return "pyinstaller", nil
+	}
+	if isDotnetBundle(path) {
+		return "dotnet-bundle", nil
+	}
+	if isNuitkaOnefile(path) {
+		return "nuitka", nil
+	}
+	if isZipSFX(path) {
+		return "zip", nil
+	}
 	return "", nil
 }
 

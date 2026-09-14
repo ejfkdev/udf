@@ -190,6 +190,10 @@ func extractLayerEntries(plan *extractPlan, layerName string, buf []byte, dirs *
 		if node == nil {
 			continue
 		}
+		if fsview.IsDeviceKind(node.Kind) {
+			// 设备节点/FIFO 无法在非特权环境重建，跳过且不计入提取数。
+			continue
+		}
 		if err := applyNode(plan, node, hdr, tr, buf, dirs); err != nil {
 			return fmt.Errorf("extract %s from layer %s: %w", hdr.Name, layerName, err)
 		}

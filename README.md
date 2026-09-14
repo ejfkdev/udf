@@ -40,6 +40,7 @@ Archive handling:
 
 - Extract image archives into a merged `rootfs`
 - Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz4`, `.zip`, `.7z`, `.rar`, `.cpio` (and `.cpio.gz`/`.cpio.xz`/`.cpio.zst`, e.g. initramfs), `.asar` (Electron), `.rpm`, `.deb`/`.ipk`, `.cab`/`.msi`-embedded cabs, `.nar` (Nix), `.xar`/`.pkg` (macOS installer) (and `.ppkg` Windows provisioning packages, an OPC/ZIP)
+- Executable bundle formats: PyInstaller onefile (CArchive + PYZ, `.pyc` reconstruction), Nuitka onefile (appended and embedded payloads), .NET single-file apps (bundle v1/v2/v6, incl. deflate), ZIP self-extracting executables; binary Android XML (AXML) inside APKs — `AndroidManifest.xml`, layouts — is decoded to readable text XML automatically
 - Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami`, OVA, OVF, VMA, SIF, AppImage (ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes)
 - Common image layouts: flat `manifest.json + config.json + layers/...`, classic `docker save` (`<layer-id>/layer.tar`), OCI image layout directories, and single-file OCI image archives (`.oci.tar`, incl. flatpak bundles)
 - Input may be a single archive, a glob pattern, or a directory (top level scanned)
@@ -204,7 +205,7 @@ Built-in conveniences: `-h` per-command help, `-v` version, `--json` for machine
 
 Every command takes **one input expression** for the archive:
 
-- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`) — required by `info`, `ls` and `cp`
+- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`/PyInstaller/Nuitka/.NET single-file executable) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`) — required by `info`, `ls` and `cp`
 - a glob pattern, or a directory (top level scanned, not recursive) — `extract` also accepts these and expands them into a batch
 
 Examples:
@@ -467,7 +468,7 @@ filesystem image.
 
 Supported:
 
-- archive extraction (tar, tar.gz/tgz, tar.xz, tar.bz2, tar.zst, tar.lz4, zip, 7z, rar, cpio, cpio.gz/xz/zst, asar, rpm, deb/ipk, cab, nar, xar/pkg, OCI layout, oci-archive/flatpak, `docker save`), batch via directory or glob
+- archive extraction (tar, tar.gz/tgz, tar.xz, tar.bz2, tar.zst, tar.lz4, zip, 7z, rar, cpio, cpio.gz/xz/zst, asar, rpm, deb/ipk, cab, nar, xar/pkg, pyinstaller, nuitka, .NET single-file, zip SFX, OCI layout, oci-archive/flatpak, `docker save`), batch via directory or glob
 - disk / VM images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM/ESD/SWM, FFU, VMA, SIF, OVA/OVF, raw/`.img`/`.ami`
 - filesystems (whole disk, partitions, or LVM2 logical volumes): ext2/3/4, xfs, btrfs, NTFS, squashfs, ISO9660, UDF, exFAT, EROFS (uncompressed), FAT12/16/32
 - listing without extracting (`ls`), selective extraction (`cp`), metadata (`info`), single-file read to stdout (`cat`), hex header dump (`xxd`), full extraction (`extract`)

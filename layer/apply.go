@@ -65,6 +65,8 @@ func ApplyLayer(r io.Reader, outputDir string, buf []byte) ([]fsutil.DirMetadata
 			if err := fsutil.ReplaceWithHardlink(outputDir, targetPath, hdr); err != nil {
 				return nil, fmt.Errorf("create hardlink %s: %w", hdr.Name, err)
 			}
+		case tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
+			// 设备节点和 FIFO 无法在非特权环境重建，与磁盘镜像路径一致地跳过。
 		default:
 			return nil, fmt.Errorf("unsupported tar entry type %q for %s", hdr.Typeflag, hdr.Name)
 		}

@@ -18,7 +18,17 @@ const (
 	KindFile
 	KindSymlink
 	KindHardlink
+	KindCharDev
+	KindBlockDev
+	KindFifo
 )
+
+// IsDeviceKind reports whether a kind is a device node or FIFO. These carry
+// no content and cannot be recreated without privileges, so extraction paths
+// skip them while listings still show them.
+func IsDeviceKind(k Kind) bool {
+	return k == KindCharDev || k == KindBlockDev || k == KindFifo
+}
 
 const opaqueWhiteout = ".wh..wh..opq"
 
@@ -37,6 +47,8 @@ type Node struct {
 	Gname     string
 	Linkname  string // symlink target, or hardlink source path inside the tree
 	Layer     string // archive entry name of the layer that last defined this node
+	Devmajor  int64  // device major number, only meaningful for KindCharDev/KindBlockDev
+	Devminor  int64  // device minor number, only meaningful for KindCharDev/KindBlockDev
 	Children  []*Node
 }
 
@@ -119,6 +131,8 @@ func mergeEntry(root *Node, layerName string, hdr *tar.Header) error {
 		Gname:     hdr.Gname,
 		Linkname:  hdr.Linkname,
 		Layer:     layerName,
+		Devmajor:  hdr.Devmajor,
+		Devminor:  hdr.Devminor,
 	}
 	parent.insert(node)
 	return nil
@@ -134,6 +148,12 @@ func classifyType(hdr *tar.Header) (Kind, error) {
 		return KindSymlink, nil
 	case tar.TypeLink:
 		return KindHardlink, nil
+	case tar.TypeChar:
+		return KindCharDev, nil
+	case tar.TypeBlock:
+		return KindBlockDev, nil
+	case tar.TypeFifo:
+		return KindFifo, nil
 	default:
 		return 0, fmt.Errorf("unsupported tar entry type %q for %s", hdr.Typeflag, hdr.Name)
 	}

@@ -144,3 +144,29 @@ func buildLayer(t *testing.T, entries []tarEntry) *bytes.Reader {
 
 	return bytes.NewReader(buf.Bytes())
 }
+
+func TestApplyLayerSkipsDeviceNodes(t *testing.T) {
+	root := t.TempDir()
+
+	if _, err := ApplyLayer(buildLayer(t, []tarEntry{
+		fileEntry("hello.txt", "hi"),
+		{Header: &tar.Header{
+			Name: "dev/console", Mode: 0o600,
+			Typeflag: tar.TypeChar, Devmajor: 5, Devminor: 1,
+		}},
+		{Header: &tar.Header{Name: "dev/fifo", Mode: 0o644, Typeflag: tar.TypeFifo}},
+	}), root, make([]byte, 32*1024)); err != nil {
+		t.Fatalf("apply layer with device nodes: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, "hello.txt"))
+	if err != nil || string(data) != "hi" {
+		t.Fatalf("regular file not extracted: %v %q", err, data)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "dev", "console")); !os.IsNotExist(err) {
+		t.Fatalf("device node should be skipped, Lstat err = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "dev", "fifo")); !os.IsNotExist(err) {
+		t.Fatalf("fifo should be skipped, Lstat err = %v", err)
+	}
+}

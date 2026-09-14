@@ -112,6 +112,8 @@ func buildPlainTree(archivePath string) (*fsview.Node, error) {
 			Gname:     e.Gname,
 			Linkname:  e.Linkname,
 			Layer:     e.Name,
+			Devmajor:  e.Devmajor,
+			Devminor:  e.Devminor,
 		})
 	}
 	return root, nil
@@ -291,6 +293,9 @@ func materializeNode(ar arch.Archive, tree, node *fsview.Node, target string, di
 		} else if err := materializeFile(ar, src, target, buf); err != nil {
 			return err
 		}
+	case fsview.KindCharDev, fsview.KindBlockDev, fsview.KindFifo:
+		// 设备节点和 FIFO 无法在非特权环境重建，跳过且不计入提取数。
+		return nil
 	default:
 		return fmt.Errorf("unsupported node kind for %s", node.Path)
 	}

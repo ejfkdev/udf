@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/bodgit/sevenzip"
@@ -32,6 +33,8 @@ type Entry struct {
 	Uname    string
 	Gname    string
 	Linkname string
+	Devmajor int64 // device major number, only meaningful for device kinds
+	Devminor int64 // device minor number, only meaningful for device kinds
 }
 
 // Archive is an opened archive: List enumerates its members, Open streams one
@@ -94,6 +97,12 @@ func Open(path string) (Archive, error) {
 		return &narArchive{path: path}, nil
 	case "xar":
 		return &xarArchive{path: path}, nil
+	case "pyinstaller":
+		return &pyinstArchive{path: path}, nil
+	case "dotnet-bundle":
+		return openDotnetBundle(path)
+	case "nuitka":
+		return &nuitkaArchive{path: path}, nil
 	default:
 		return nil, fmt.Errorf("unsupported archive format: %s", filepath.Base(path))
 	}
@@ -175,6 +184,12 @@ func tarKind(hdr *tar.Header) fsview.Kind {
 		return fsview.KindSymlink
 	case tar.TypeLink:
 		return fsview.KindHardlink
+	case tar.TypeChar:
+		return fsview.KindCharDev
+	case tar.TypeBlock:
+		return fsview.KindBlockDev
+	case tar.TypeFifo:
+		return fsview.KindFifo
 	default:
 		return fsview.KindFile
 	}
@@ -186,6 +201,12 @@ func cpioKind(m cpio.FileMode) fsview.Kind {
 		return fsview.KindDir
 	case 0o120000:
 		return fsview.KindSymlink
+	case 0o020000:
+		return fsview.KindCharDev
+	case 0o060000:
+		return fsview.KindBlockDev
+	case 0o010000:
+		return fsview.KindFifo
 	default:
 		return fsview.KindFile
 	}
@@ -241,6 +262,8 @@ func (a *tarArchive) List() ([]Entry, error) {
 			Uname:    hdr.Uname,
 			Gname:    hdr.Gname,
 			Linkname: hdr.Linkname,
+			Devmajor: hdr.Devmajor,
+			Devminor: hdr.Devminor,
 		})
 	}
 }
@@ -316,9 +339,17 @@ func (a *zipArchive) List() ([]Entry, error) {
 		if kind == fsview.KindSymlink {
 			linkname = zipLinkTarget(f)
 		}
+		size := int64(f.UncompressedSize64)
+		if kind == fsview.KindFile && maybeAXMLName(f.Name) {
+			// APK XML entries are compiled binary AXML; report the size of
+			// the decoded text that listing and extraction will show.
+			if decoded, ok := zipDecodeAXML(f); ok {
+				size = int64(len(decoded))
+			}
+		}
 		entries = append(entries, Entry{
 			Name:     f.Name,
-			Size:     int64(f.UncompressedSize64),
+			Size:     size,
 			Kind:     kind,
 			Mode:     defaultMode(kind, permSpecial(f.Mode())),
 			ModTime:  f.Modified,
@@ -327,6 +358,38 @@ func (a *zipArchive) List() ([]Entry, error) {
 	}
 	return entries, nil
 }
+
+// maybeAXMLName reports whether the entry name suggests compiled Android XML.
+func maybeAXMLName(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.HasSuffix(lower, ".xml") || strings.HasSuffix(lower, ".axml")
+}
+
+// zipDecodeAXML reads a zip entry and decodes it when it is binary Android
+// XML, returning the decoded text.
+func zipDecodeAXML(f *zip.File) (string, bool) {
+	if f.UncompressedSize64 == 0 || f.UncompressedSize64 > axmlMaxEntrySize {
+		return "", false
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return "", false
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, int64(axmlMaxEntrySize)+1))
+	if err != nil || !isAXML(data) {
+		return "", false
+	}
+	decoded, err := DecodeAXML(data)
+	if err != nil {
+		return "", false
+	}
+	return decoded, true
+}
+
+// axmlMaxEntrySize bounds how much of an entry is buffered for AXML decoding;
+// compiled manifests and layout files stay well below this.
+const axmlMaxEntrySize = 8 << 20
 
 // zipLinkTarget reads the link target stored in a ZIP symlink entry's content
 // (the Unix "symlink stored as a regular file" convention). It returns "" when
@@ -352,6 +415,12 @@ func (a *zipArchive) Open(name string) (io.ReadCloser, int64, error) {
 	for _, f := range zr.File {
 		if f.Name != name {
 			continue
+		}
+		if maybeAXMLName(f.Name) {
+			if decoded, ok := zipDecodeAXML(f); ok {
+				_ = zr.Close()
+				return io.NopCloser(strings.NewReader(decoded)), int64(len(decoded)), nil
+			}
 		}
 		rc, err := f.Open()
 		if err != nil {

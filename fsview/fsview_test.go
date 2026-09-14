@@ -230,3 +230,41 @@ func hardlinkEntry(name, target string) layerEntry {
 		},
 	}
 }
+
+func TestBuildKeepsDeviceNodes(t *testing.T) {
+	root := buildTree(t, map[string][]layerEntry{
+		"base.tar": {
+			dirEntry("dev"),
+			{Header: &tar.Header{
+				Name: "dev/console", Mode: 0o600,
+				Typeflag: tar.TypeChar, Devmajor: 5, Devminor: 1,
+			}},
+			{Header: &tar.Header{
+				Name: "dev/fifo", Mode: 0o644, Typeflag: tar.TypeFifo,
+			}},
+			fileEntry("keep.txt", "x"),
+		},
+	})
+
+	console := root.Resolve("dev/console")
+	if console == nil {
+		t.Fatal("expected dev/console to be merged into the tree")
+	}
+	if console.Kind != KindCharDev {
+		t.Fatalf("dev/console kind = %v, want KindCharDev", console.Kind)
+	}
+	if console.Devmajor != 5 || console.Devminor != 1 {
+		t.Fatalf("dev/console device = %d,%d, want 5,1", console.Devmajor, console.Devminor)
+	}
+	if !IsDeviceKind(console.Kind) {
+		t.Fatal("IsDeviceKind(KindCharDev) = false")
+	}
+
+	fifo := root.Resolve("dev/fifo")
+	if fifo == nil || fifo.Kind != KindFifo {
+		t.Fatalf("dev/fifo = %+v, want KindFifo node", fifo)
+	}
+	if !IsDeviceKind(fifo.Kind) {
+		t.Fatal("IsDeviceKind(KindFifo) = false")
+	}
+}

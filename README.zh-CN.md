@@ -40,6 +40,7 @@ English version: [README.md](./README.md)
 
 - 将镜像归档解包为合并后的 `rootfs`
 - 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.tar.xz`、`.tar.bz2`、`.tar.zst`、`.tar.lz4`、`.zip`、`.7z`、`.rar`、`.cpio`（以及 `.cpio.gz`/`.cpio.xz`/`.cpio.zst`，如 initramfs）、`.asar`（Electron）、`.rpm`、`.deb`/`.ipk`、`.cab`（含 `.msi` 内嵌 cab）、`.nar`（Nix）、`.xar`/`.pkg`（macOS 安装器）（以及 `.ppkg` Windows 预配包，OPC/ZIP）
+- 可执行文件封装格式：PyInstaller onefile（CArchive + PYZ，重建 `.pyc`）、Nuitka onefile（尾部附加与内嵌载荷）、.NET single-file 应用（bundle v1/v2/v6，含 deflate）、ZIP 自解压 exe；APK 内的二进制 Android XML（AXML）——`AndroidManifest.xml`、布局文件——自动解码为可读文本 XML
 - 虚拟磁盘镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM、ESD、SWM、FFU、raw/`.img`/`.ami`、OVA、OVF、VMA、SIF、AppImage（ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT，含 LVM2 逻辑卷）
 - 支持常见镜像归档结构：平铺结构 `manifest.json + config.json + layers/...`、经典 `docker save` 结构 `<layer-id>/layer.tar`、OCI 镜像布局目录，以及单文件 OCI 镜像归档（`.oci.tar`，含 flatpak bundle）
 - 输入可以是单个归档、通配符模式或目录（只扫描一层）
@@ -193,7 +194,7 @@ go build -o udf .
 
 每个命令接收**一个输入表达式**作为归档：
 
-- 单个归档文件（`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`）或磁盘镜像（`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`）——`info`、`ls`、`cp` 要求此形式
+- 单个归档文件（`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`/PyInstaller/Nuitka/.NET single-file 可执行文件）或磁盘镜像（`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`）——`info`、`ls`、`cp` 要求此形式
 - 通配符模式或目录（只扫描一层，不递归）——`extract` 额外支持，并展开为批量处理
 
 示例：
@@ -453,7 +454,7 @@ func main() {
 
 当前支持：
 
-- 归档解包（tar、tar.gz/tgz、tar.xz、tar.bz2、tar.zst、tar.lz4、zip、7z、rar、cpio、cpio.gz/xz/zst、asar、rpm、deb/ipk、cab、nar、xar/pkg、OCI 布局、OCI 归档/flatpak、`docker save`），目录 / 通配符批量
+- 归档解包（tar、tar.gz/tgz、tar.xz、tar.bz2、tar.zst、tar.lz4、zip、7z、rar、cpio、cpio.gz/xz/zst、asar、rpm、deb/ipk、cab、nar、xar/pkg、pyinstaller、nuitka、.NET single-file、zip 自解压、OCI 布局、OCI 归档/flatpak、`docker save`），目录 / 通配符批量
 - 磁盘 / 虚拟机镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM/ESD/SWM、FFU、VMA、SIF、OVA/OVF、raw/`.img`/`.ami`
 - 文件系统（整块磁盘、分区或 LVM2 逻辑卷）：ext2/3/4、xfs、btrfs、NTFS、squashfs、ISO9660、UDF、exFAT、EROFS（未压缩）、FAT12/16/32
 - 不解压列出内容（`ls`）、单独提取（`cp`）、元数据（`info`）、单文件读 stdout（`cat`）、十六进制文件头（`xxd`）、整包解压（`extract`）

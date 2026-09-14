@@ -22,6 +22,12 @@ func rpmKind(mode int) fsview.Kind {
 		return fsview.KindDir
 	case 0o120000:
 		return fsview.KindSymlink
+	case 0o020000:
+		return fsview.KindCharDev
+	case 0o060000:
+		return fsview.KindBlockDev
+	case 0o010000:
+		return fsview.KindFifo
 	default:
 		return fsview.KindFile
 	}
