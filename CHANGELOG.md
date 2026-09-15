@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.6.1] - 2026-09-15
+
+### Changed
+
+- docs: add the "Built with ZCode" badge to both READMEs
+
 ## [v0.6.0] - 2026-09-14
 
 ### Added
