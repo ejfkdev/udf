@@ -212,18 +212,40 @@ go build -o udf .
 ### `info` — 查看镜像元数据
 
 ```bash
-./udf info ./image.tar
+./udf info ./image.tar                      # 只有一个镜像，或用 -t/-i 选定
+./udf info ./docker-save.tar.gz             # 多镜像：每个镜像一行
+./udf info -t demo/app:latest ./image.tar    # 指定镜像的详细信息
 ```
 
+单镜像（带 `-t`/`--repo-tag` 或 `-i`/`--image-index` 时也是这个形态）：
+
 ```text
-index         0
-total_images  1
-repo_tags     [demo/app:latest]
-config_path   config.json
-architecture  amd64
-working_dir   /app
-layers        [layer1.tar layer2.tar]
+index           0
+total_images    1
+repo_tags       [demo/app:latest]
+config_path     config.json
+os              linux
+architecture    amd64
+created         2026-04-15T12:50:36.123456789Z
+docker_version  27.5.1
+working_dir     /app
+entrypoint      [/docker-entrypoint.sh]
+cmd             [/bin/sh -c sh /app/entrypoint.sh]
+layer_count     2
+size            75.9 MiB
+layers          [layer1.tar layer2.tar]
 ```
+
+多镜像归档且未指定镜像时，不再报错，而是把镜像清单当作 info 打出来（文件本身就是这个信息，缺的是"要哪一个"）：
+
+```text
+Index  Image                          OS     Architecture  Created                        Layers  Size
+-----  -----------------------------  -----  ------------  -----------------------------  ------  ---------
+0      demo/app:latest, app:latest    linux  amd64         2026-04-15T12:50:36.123456789Z  2      75.9 MiB
+1      demo/db:9.1-lts                linux  amd64         2026-03-02T08:11:02.987654321Z  5      412.3 MiB
+```
+
+`--json` 返回同样的结构化数组。`Size` 是该镜像各层在归档里占的空间；未建索引的归档（未压缩或很小的）该列为空。
 
 ### `ls` — 不解压列出目录内容
 

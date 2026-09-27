@@ -15,6 +15,7 @@ import (
 	"github.com/ejfkdev/xyz-go/langx"
 
 	"github.com/ejfkdev/udf/i18n"
+	"github.com/ejfkdev/udf/image"
 	"github.com/ejfkdev/udf/types"
 )
 
@@ -137,15 +138,78 @@ func writeTarEntry(t *testing.T, tw *tar.Writer, name string, body []byte) {
 func TestInfoImage(t *testing.T) {
 	imagePath := writeTestImage(t)
 
-	resp, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath})
+	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1})
 	if err != nil {
 		t.Fatalf("info: %v", err)
+	}
+	resp, ok := got.(*ImageInfoResult)
+	if !ok {
+		t.Fatalf("single-image info returned %T, want *ImageInfoResult", got)
 	}
 	if len(resp.Layers) != 2 || resp.Architecture != "amd64" || resp.WorkingDir != "/app" {
 		t.Fatalf("unexpected info result: %+v", resp)
 	}
 	if len(resp.RepoTags) != 1 || resp.RepoTags[0] != "test/app:latest" {
 		t.Fatalf("unexpected repo tags: %v", resp.RepoTags)
+	}
+	if resp.LayerCount != 2 {
+		t.Fatalf("layer_count = %d, want 2", resp.LayerCount)
+	}
+}
+
+// TestInfoImageMultipleImages checks that an archive holding several images is
+// answered with one summary per image — the CLI renders that as a table — and
+// that selecting one still returns the detailed form.
+func TestInfoImageMultipleImages(t *testing.T) {
+	imagePath := writeTestMultiImage(t)
+
+	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1})
+	if err != nil {
+		t.Fatalf("info: %v", err)
+	}
+	summaries, ok := got.([]image.ImageSummary)
+	if !ok {
+		t.Fatalf("multi-image info returned %T, want []image.ImageSummary", got)
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("got %d summaries, want 2", len(summaries))
+	}
+	if summaries[0].Index != 0 || summaries[1].Index != 1 {
+		t.Fatalf("unexpected indices: %d, %d", summaries[0].Index, summaries[1].Index)
+	}
+	if summaries[0].Image != "test/one:latest" || summaries[1].Image != "test/two:latest" {
+		t.Fatalf("unexpected images: %q, %q", summaries[0].Image, summaries[1].Image)
+	}
+	if summaries[0].Layers != 1 || summaries[1].Layers != 1 {
+		t.Fatalf("unexpected layer counts: %d, %d", summaries[0].Layers, summaries[1].Layers)
+	}
+	if summaries[0].OS != "linux" || summaries[0].Architecture != "amd64" || summaries[0].Created == "" {
+		t.Fatalf("summary is missing config detail: %+v", summaries[0])
+	}
+
+	// The JSON shape is what HTTP and MCP clients see: snake_case keys, like
+	// every other result.
+	encoded, err := json.Marshal(summaries)
+	if err != nil {
+		t.Fatalf("marshal summaries: %v", err)
+	}
+	for _, want := range []string{`"index":0`, `"image":"test/one:latest"`, `"os":"linux"`, `"layers":1`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("summary JSON is missing %s: %s", want, encoded)
+		}
+	}
+
+	// Selecting an image keeps the detailed answer.
+	got, err = infoImage(context.Background(), &InfoArgs{Archive: imagePath, RepoTag: "test/two:latest", ImageIndex: -1})
+	if err != nil {
+		t.Fatalf("info by tag: %v", err)
+	}
+	detail, ok := got.(*ImageInfoResult)
+	if !ok {
+		t.Fatalf("selected info returned %T, want *ImageInfoResult", got)
+	}
+	if detail.Index != 1 || detail.TotalImages != 2 || detail.LayerCount != 1 {
+		t.Fatalf("unexpected detail: %+v", detail)
 	}
 }
 
@@ -602,4 +666,66 @@ func TestExtractImagesBatchNameCollision(t *testing.T) {
 	if results[1].Error == "" {
 		t.Fatalf("second archive with a colliding name should report a conflict")
 	}
+}
+
+// writeTestMultiImage writes an image archive holding two images with their own
+// configs and layers, so code that must handle multi-image archives has one to
+// work with.
+func writeTestMultiImage(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	imagePath := filepath.Join(dir, "multi.tar")
+	f, err := os.Create(imagePath)
+	if err != nil {
+		t.Fatalf("create image tar: %v", err)
+	}
+	defer f.Close()
+
+	tw := tar.NewWriter(f)
+	items := make([]types.ManifestItem, 0, 2)
+	for i, spec := range []struct {
+		config string
+		tag    string
+		layer  string
+		file   string
+	}{
+		{"one.json", "test/one:latest", "one/layer.tar", "one.txt"},
+		{"two.json", "test/two:latest", "two/layer.tar", "two.txt"},
+	} {
+		cfg, err := json.Marshal(types.ImageConfig{
+			Architecture:  "amd64",
+			OS:            "linux",
+			Created:       "2026-04-15T12:50:36.123456789Z",
+			DockerVersion: "27.5.1",
+		})
+		if err != nil {
+			t.Fatalf("marshal config: %v", err)
+		}
+		writeTarEntry(t, tw, spec.config, cfg)
+
+		body := []byte(spec.tag)
+		writeTarEntry(t, tw, spec.layer, buildLayer(t, []tarEntry{{
+			Header: tarHeader(spec.file, tar.TypeReg, 0o644, int64(len(body))),
+			Body:   body,
+		}}))
+
+		items = append(items, types.ManifestItem{
+			Config:   spec.config,
+			RepoTags: []string{spec.tag},
+			Layers:   []string{spec.layer},
+		})
+		_ = i
+	}
+
+	manifestBody, err := json.Marshal(items)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	writeTarEntry(t, tw, "manifest.json", manifestBody)
+
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close image tar writer: %v", err)
+	}
+	return imagePath
 }

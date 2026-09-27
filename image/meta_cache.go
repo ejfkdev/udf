@@ -19,6 +19,7 @@ import (
 // size or a timestamp lands on a different key.
 func cacheKeyFor(path string, args ...string) string {
 	h := sha256.New()
+	_, _ = io.WriteString(h, cacheFormat)
 	_, _ = io.WriteString(h, path)
 	if st, err := os.Stat(path); err == nil {
 		_, _ = fmt.Fprintf(h, "\x00%d\x00%d", st.Size(), st.ModTime().UnixNano())
@@ -37,6 +38,10 @@ func cacheKeyFor(path string, args ...string) string {
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// cacheFormat invalidates every cached entry when the shape of a cached value
+// changes: a stale entry would otherwise be read back without its new fields.
+const cacheFormat = "udf-cache-2"
 
 // cacheDir returns the directory holding small derived data (file listings,
 // image metadata, archive indexes): a per-user directory under the system

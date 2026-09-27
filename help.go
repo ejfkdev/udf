@@ -31,7 +31,7 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 		versionLabel:  "版本",
 		repoLabel:     "仓库",
 		examplesLabel: "示例",
-		examples: `  udf info ./image.tar                       查看镜像元数据
+		examples: `  udf info ./image.tar                       查看镜像元数据（多镜像归档会每个镜像列一行）
   udf ls ./image.tar /etc                   列出镜像内 /etc（不落盘）
   udf cp ./image.tar /etc/passwd ./passwd   单独提取一个文件
   udf cat ./image.tar /etc/passwd          输出单个文件内容到 stdout（可管道）
@@ -70,7 +70,7 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 		versionLabel:  "Version",
 		repoLabel:     "Repository",
 		examplesLabel: "Examples",
-		examples: `  udf info ./image.tar                       show image metadata
+		examples: `  udf info ./image.tar                       show image metadata (a multi-image archive lists one line per image)
   udf ls ./image.tar /etc                   list /etc inside the image (no extraction)
   udf cp ./image.tar /etc/passwd ./passwd   extract a single file
   udf cat ./image.tar /etc/passwd           write a single file to stdout (pipeable)

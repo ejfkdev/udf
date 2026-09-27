@@ -58,17 +58,28 @@ type InfoArgs struct {
 	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array" default:"-1" cli:"shorthand=i"`
 }
 
-type InfoResult struct {
-	Index        int      `json:"index"`
-	TotalImages  int      `json:"total_images"`
-	RepoTags     []string `json:"repo_tags"`
-	ConfigPath   string   `json:"config_path"`
-	Architecture string   `json:"architecture,omitempty"`
-	WorkingDir   string   `json:"working_dir,omitempty"`
-	Entrypoint   []string `json:"entrypoint,omitempty"`
-	Cmd          []string `json:"cmd,omitempty"`
-	Layers       []string `json:"layers"`
+// ImageInfoResult is the detail of one selected image.
+type ImageInfoResult struct {
+	Index         int      `json:"index"`
+	TotalImages   int      `json:"total_images"`
+	RepoTags      []string `json:"repo_tags"`
+	ConfigPath    string   `json:"config_path"`
+	OS            string   `json:"os,omitempty"`
+	Architecture  string   `json:"architecture,omitempty"`
+	Created       string   `json:"created,omitempty"`
+	DockerVersion string   `json:"docker_version,omitempty"`
+	WorkingDir    string   `json:"working_dir,omitempty"`
+	Entrypoint    []string `json:"entrypoint,omitempty"`
+	Cmd           []string `json:"cmd,omitempty"`
+	LayerCount    int      `json:"layer_count"`
+	Size          string   `json:"size,omitempty"`
+	Layers        []string `json:"layers"`
+}
 
+// InfoResult answers for the inputs that are not a single image: disk images
+// and plain archives. Keeping it separate from the image detail means neither
+// form carries an empty section.
+type InfoResult struct {
 	// Disks carries disk-image metadata (qcow2/vmdk/ova), present only for
 	// disk inputs.
 	Disks []image.DiskInfo `json:"disks,omitempty"`
@@ -78,7 +89,10 @@ type InfoResult struct {
 	Plain *image.PlainInfo `json:"plain,omitempty"`
 }
 
-func infoImage(_ context.Context, in *InfoArgs) (*InfoResult, error) {
+// infoImage answers with a single image's detail, or — for an archive holding
+// several images that the caller did not select from — with one summary per
+// image, which the CLI renders as a table and --json as an array.
+func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 	switch image.ClassifyInput(in.Archive) {
 	case "disk":
 		meta, err := image.ScanDiskMetadata(in.Archive)
@@ -99,20 +113,37 @@ func infoImage(_ context.Context, in *InfoArgs) (*InfoResult, error) {
 		return nil, err
 	}
 
+	// No image selected: an archive holding several images is answered with a
+	// listing of them, since which one the caller wants is exactly what is
+	// missing — the detail of any one image is one -t/-i away.
+	if sel.RepoTag == "" && sel.ImageIndex < 0 {
+		summaries, err := image.ScanImageSummaries(in.Archive)
+		if err == nil && len(summaries) > 1 {
+			return summaries, nil
+		}
+	}
+
 	meta, err := image.ScanImageMetadata(in.Archive, sel)
 	if err != nil {
 		return nil, toXyzErr(err)
 	}
 
-	resp := &InfoResult{
+	resp := &ImageInfoResult{
 		Index:       meta.Index,
 		TotalImages: meta.Total,
 		RepoTags:    meta.RepoTags,
 		ConfigPath:  meta.ConfigPath,
+		LayerCount:  len(meta.LayerOrder),
 		Layers:      meta.LayerOrder,
 	}
+	if meta.StoredSize > 0 {
+		resp.Size = image.HumanBytes(meta.StoredSize)
+	}
 	if meta.Config != nil {
+		resp.OS = meta.Config.OS
 		resp.Architecture = meta.Config.Architecture
+		resp.Created = meta.Config.Created
+		resp.DockerVersion = meta.Config.DockerVersion
 		resp.WorkingDir = meta.Config.Config.WorkingDir
 		resp.Entrypoint = meta.Config.Config.Entrypoint
 		resp.Cmd = meta.Config.Config.Cmd

@@ -223,18 +223,44 @@ Examples:
 ### `info` — image archive metadata
 
 ```bash
-./udf info ./image.tar
+./udf info ./image.tar                     # the only image, or one selected with -t/-i
+./udf info ./docker-save.tar.gz            # several images: one line per image
+./udf info -t demo/app:latest ./image.tar   # the detail of one image
 ```
 
+One image (also the form used with `-t`/`--repo-tag` or `-i`/`--image-index`):
+
 ```text
-index         0
-total_images  1
-repo_tags     [demo/app:latest]
-config_path   config.json
-architecture  amd64
-working_dir   /app
-layers        [layer1.tar layer2.tar]
+index           0
+total_images    1
+repo_tags       [demo/app:latest]
+config_path     config.json
+os              linux
+architecture    amd64
+created         2026-04-15T12:50:36.123456789Z
+docker_version  27.5.1
+working_dir     /app
+entrypoint      [/docker-entrypoint.sh]
+cmd             [/bin/sh -c sh /app/entrypoint.sh]
+layer_count     2
+size            75.9 MiB
+layers          [layer1.tar layer2.tar]
 ```
+
+An archive holding several images and no selection is answered with a listing of
+them instead of an error — the file is what it is, and which image it holds is
+exactly the information missing:
+
+```text
+Index  Image                          OS     Architecture  Created                        Layers  Size
+-----  -----------------------------  -----  ------------  -----------------------------  ------  ---------
+0      demo/app:latest, app:latest    linux  amd64         2026-04-15T12:50:36.123456789Z  2      75.9 MiB
+1      demo/db:9.1-lts                linux  amd64         2026-03-02T08:11:02.987654321Z  5      412.3 MiB
+```
+
+`--json` returns the same as an array. `Size` is how much space the image's
+layers take in the archive, and is empty when the archive's members were not
+indexed (an uncompressed or small archive).
 
 ### `ls` — list directory contents without extracting
 

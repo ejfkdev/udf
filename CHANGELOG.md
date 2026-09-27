@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.8.0] - 2026-09-28
+
+### Added
+
+- `info` on an archive that holds several images now prints what the file is
+  instead of asking for a selection: one line per image, with the repo tags to
+  pass to `-t`, the config's `os`, `architecture` and `created`, the layer count
+  and how much space the layers take in the archive. `--json` returns the same
+  as an array, and `-t`/`-i` still answer with one image's detail. Selecting an
+  image is still required where a target is genuinely needed (`ls`, `cp`,
+  `cat`, `extract`), and that error keeps listing the available tags.
+- The single-image detail gained `os`, `created`, `docker_version`,
+  `layer_count` and `size`, so a machine can be identified from the config
+  without unpacking anything.
+
+### Changed
+
+- The `info` result is two shapes now: one image's detail, or the disk/plain
+  archive summary. Neither carries the other's empty fields, in the text form
+  or in JSON.
+
+
 ## [v0.7.1] - 2026-09-28
 
 ### Fixed

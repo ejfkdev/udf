@@ -7,8 +7,11 @@ type ManifestItem struct {
 }
 
 type ImageConfig struct {
-	Architecture string `json:"architecture"`
-	Config       struct {
+	Architecture  string `json:"architecture"`
+	OS            string `json:"os"`
+	Created       string `json:"created"`
+	DockerVersion string `json:"docker_version"`
+	Config        struct {
 		User         string         `json:"User"`
 		Env          []string       `json:"Env"`
 		Entrypoint   []string       `json:"Entrypoint"`
@@ -26,4 +29,8 @@ type ImageMetadata struct {
 	LayerOrder []string
 	Config     *ImageConfig
 	ConfigRaw  any
+
+	// StoredSize is how much space the image's layers take in the archive,
+	// when an index knows their members; zero when it does not.
+	StoredSize int64
 }
