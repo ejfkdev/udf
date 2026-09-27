@@ -8,16 +8,28 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/djherbis/times"
 )
 
-// cacheKeyFor derives a stable, small cache key from the source file's identity
-// (path, size, mtime) plus any extra distinguishing arguments. The key changes
-// when the source file changes, so cached metadata is never stale.
+// cacheKeyFor derives a stable, small cache key from the source file's
+// identity: its path, size and timestamps — modification time, plus change and
+// creation time where the platform reports them. Nothing reads the file
+// contents, so deriving a key costs one stat, and any edit that changes the
+// size or a timestamp lands on a different key.
 func cacheKeyFor(path string, args ...string) string {
 	h := sha256.New()
 	_, _ = io.WriteString(h, path)
 	if st, err := os.Stat(path); err == nil {
 		_, _ = fmt.Fprintf(h, "\x00%d\x00%d", st.Size(), st.ModTime().UnixNano())
+	}
+	if ts, err := times.Stat(path); err == nil {
+		if ts.HasChangeTime() {
+			_, _ = fmt.Fprintf(h, "\x00%d", ts.ChangeTime().UnixNano())
+		}
+		if ts.HasBirthTime() {
+			_, _ = fmt.Fprintf(h, "\x00%d", ts.BirthTime().UnixNano())
+		}
 	}
 	for _, a := range args {
 		_, _ = io.WriteString(h, "\x00")
@@ -26,14 +38,16 @@ func cacheKeyFor(path string, args ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// cacheDir returns the per-user cache directory for small derived metadata
-// (partition layout, listings), or "" when it is unavailable.
+// cacheDir returns the directory holding small derived data (file listings,
+// image metadata, archive indexes): a per-user directory under the system
+// temporary directory. Every entry can be rebuilt from its source file, so the
+// directory may be deleted at any time and does not survive a reboot; the
+// UDF_CACHE_DIR environment variable overrides it.
 func cacheDir() string {
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return ""
+	if dir := os.Getenv("UDF_CACHE_DIR"); dir != "" {
+		return dir
 	}
-	return filepath.Join(base, "udf", "meta")
+	return filepath.Join(os.TempDir(), "ejfkdev", "udf")
 }
 
 func loadCachedJSON(key string, v any) bool {

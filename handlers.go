@@ -6,6 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"sync"
+	"sync/atomic"
 
 	errs "github.com/ejfkdev/xyz-go/errors"
 
@@ -343,30 +348,100 @@ func extractImages(ctx context.Context, in *ExtractArgs) ([]ExtractResult, error
 		return nil, errs.New(errs.KindInvalidInput, "no supported archive files found")
 	}
 
-	results := make([]ExtractResult, 0, len(paths))
-	var succeeded int
-	var firstErr error
-
-	for _, p := range paths {
-		if ctx.Err() != nil {
-			break
-		}
-		r, err := extractOne(p, in.Output, in.Force, in.BufferSize, sel)
+	if len(paths) == 1 {
+		r, err := extractOne(paths[0], in.Output, in.Force, in.BufferSize, sel)
 		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			r = ExtractResult{Archive: p, Error: err.Error()}
-		} else {
-			succeeded++
+			return []ExtractResult{{Archive: paths[0], Error: err.Error()}}, err
 		}
-		results = append(results, r)
+		return []ExtractResult{r}, nil
 	}
 
-	if succeeded == 0 && firstErr != nil {
+	// Archives are independent inputs, so a batch is extracted with one worker
+	// per core: each one builds its own index and writes its own output
+	// directory, and the serial decompression inside a worker keeps the core
+	// busy. Results stay in input order.
+	//
+	// Two archives that share a file name resolve to the same output
+	// directory, so a batch containing such a pair stays sequential: writing
+	// the same tree from two workers would race.
+	parallel := true
+	seen := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		base := filepath.Base(p)
+		if seen[base] {
+			parallel = false
+			break
+		}
+		seen[base] = true
+	}
+	results := make([]ExtractResult, len(paths))
+	errsByIndex := make([]error, len(paths))
+	succeeded := make([]bool, len(paths))
+	workers := extractWorkers(len(paths))
+	if !parallel {
+		workers = 1
+	}
+	var wg sync.WaitGroup
+	var next int64
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(atomic.AddInt64(&next, 1)) - 1
+				if i >= len(paths) || ctx.Err() != nil {
+					return
+				}
+				r, err := extractOne(paths[i], in.Output, in.Force, in.BufferSize, sel)
+				if err != nil {
+					errsByIndex[i] = err
+					r = ExtractResult{Archive: paths[i], Error: err.Error()}
+				} else {
+					succeeded[i] = true
+				}
+				results[i] = r
+			}
+		}()
+	}
+	wg.Wait()
+
+	var firstErr error
+	var ok int
+	for i := range paths {
+		if succeeded[i] {
+			ok++
+		} else if firstErr == nil {
+			firstErr = errsByIndex[i]
+		}
+	}
+
+	if ok == 0 && firstErr != nil {
 		return results, firstErr
 	}
 	return results, nil
+}
+
+// extractWorkers bounds how many archives are extracted at once: one per
+// core, but never more than eight, since each worker also uses several cores
+// for its own layer reads.
+func extractWorkers(paths int) int {
+	workers := runtime.GOMAXPROCS(0)
+	if workers > 8 {
+		workers = 8
+	}
+	if v := os.Getenv("UDF_EXTRACT_WORKERS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			workers = n
+		}
+	}
+	if workers > paths {
+		workers = paths
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	return workers
 }
 
 func extractOne(p, outputDir string, force bool, bufferSize int, sel image.Selection) (ExtractResult, error) {

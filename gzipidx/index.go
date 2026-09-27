@@ -8,9 +8,12 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 )
 
 // Magic identifies an index blob.
@@ -153,15 +156,41 @@ func Build(path string, opts BuildOptions) (*Index, error) {
 	// Space the captured candidates evenly over the stream.
 	ix.Checks = resampleCandidates(cands, ix.TotalOut, opts.Checkpoints)
 
-	// Verify each checkpoint by restarting the stock decompressor.
+	// Verify each checkpoint by restarting the stock decompressor. The
+	// checkpoints are independent, so they are verified in parallel: this is
+	// the only part of a build that is not tied to the serial scan.
+	verified := make([]bool, len(ix.Checks))
+	workers := runtime.GOMAXPROCS(0)
+	if workers > len(ix.Checks) {
+		workers = len(ix.Checks)
+	}
+	if workers < 1 {
+		workers = 1
+	}
+	var wg sync.WaitGroup
+	var next int64
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(atomic.AddInt64(&next, 1)) - 1
+				if i >= len(ix.Checks) {
+					return
+				}
+				cp := &ix.Checks[i]
+				if cp.len() == 0 {
+					continue
+				}
+				verified[i] = verifyCheckpoint(path, ix.DeflateStart, cp)
+			}
+		}()
+	}
+	wg.Wait()
 	keep := ix.Checks[:0]
 	for i := range ix.Checks {
-		cp := &ix.Checks[i]
-		if cp.len() == 0 {
-			continue
-		}
-		if verifyCheckpoint(path, ix.DeflateStart, cp) {
-			keep = append(keep, *cp)
+		if verified[i] {
+			keep = append(keep, ix.Checks[i])
 		}
 	}
 	ix.Checks = keep

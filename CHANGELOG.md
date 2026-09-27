@@ -42,8 +42,34 @@ keep the newest version at the top.
   the output buffer directly behind one capacity check per symbol group,
   copies short matches with a single 8-byte load/store instead of a `memmove`
   call, and reuses its code tables across the tens of thousands of deflate
-  blocks a layer contains. On Unix the compressed stream is read through a
-  read-only file mapping, which avoids copying it through a read buffer.
+  blocks a layer contains. On Unix the compressed stream is decoded straight
+  out of a read-only file mapping, which avoids copying it through a read
+  buffer first.
+- A batch of archives given to `extract` is extracted with one worker per core
+  (at most eight, `UDF_EXTRACT_WORKERS` overrides), since archives are
+  independent inputs: three 2.1 GB archives go from 49s to 17s. Results stay in
+  input order, and a batch whose members share a file name — they would resolve
+  to the same output directory — is kept sequential so two workers never write
+  the same tree.
+- Checkpoint verification during an index build runs in parallel (it is the one
+  part of a build that is not tied to the serial scan).
+
+### Fixed
+
+- The read-only mapping of the compressed stream never actually engaged: `mmap`
+  requires a page-aligned offset and a gzip stream starts a few bytes into the
+  file, so every mapping attempt failed and the scanner silently fell back to
+  buffered reads. The mapping now starts at the enclosing page boundary and
+  slices off the leading bytes, and a test covers unaligned offsets.
+- Cache keys are derived from the source file's identity only — path, size,
+  modification time, and change/creation time where the platform reports them.
+  Nothing reads file contents to build a key, so a lookup costs one `stat`, and
+  any edit that moves a timestamp lands on a fresh key.
+- Derived data (listings, image metadata, archive indexes) now lives in
+  `<system temporary directory>/ejfkdev/udf` instead of the user cache
+  directory, so it is per-user, self-cleaning and survives no reboot;
+  `UDF_CACHE_DIR` overrides the location. Nothing in it is needed for
+  correctness: every entry is rebuilt from its source file.
 
 ## [v0.6.2] - 2026-09-28
 

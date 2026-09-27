@@ -20,9 +20,15 @@ import (
 
 func writeTestImage(t *testing.T) string {
 	t.Helper()
+	return writeTestImageNamed(t, t.TempDir(), "image.tar")
+}
 
-	dir := t.TempDir()
-	imagePath := filepath.Join(dir, "image.tar")
+// writeTestImageNamed writes the same small two-layer image under a chosen
+// directory and name, so a batch of archives can be built for one test.
+func writeTestImageNamed(t *testing.T, dir, name string) string {
+	t.Helper()
+
+	imagePath := filepath.Join(dir, name)
 	f, err := os.Create(imagePath)
 	if err != nil {
 		t.Fatalf("create image tar: %v", err)
@@ -524,5 +530,76 @@ func TestEffectiveLangDetectsEnvironment(t *testing.T) {
 	t.Setenv("LC_ALL", "C")
 	if got := effectiveLang(); got != langx.En {
 		t.Fatalf("effectiveLang with C locale = %v, want en", got)
+	}
+}
+
+// TestExtractImagesBatch covers the parallel path over several archives: every
+// archive gets its own output directory and its content, and the results stay
+// in input order.
+func TestExtractImagesBatch(t *testing.T) {
+	const n = 3
+	dir := t.TempDir()
+	inputs := make([]string, 0, n)
+	for _, name := range []string{"alpha.tar", "beta.tar", "gamma.tar"} {
+		inputs = append(inputs, writeTestImageNamed(t, dir, name))
+	}
+	out := t.TempDir()
+
+	results, err := extractImages(context.Background(), &ExtractArgs{
+		Archive: filepath.Join(dir, "*.tar"), Output: out, BufferSize: 1 << 16,
+	})
+	if err != nil {
+		t.Fatalf("batch extract: %v", err)
+	}
+	if len(results) != n {
+		t.Fatalf("got %d results, want %d", len(results), n)
+	}
+	seenDirs := map[string]bool{}
+	for i, r := range results {
+		if r.Error != "" {
+			t.Fatalf("result %d (%s): %s", i, r.Archive, r.Error)
+		}
+		if !strings.HasSuffix(r.Archive, []string{"alpha.tar", "beta.tar", "gamma.tar"}[i]) {
+			t.Fatalf("result %d out of input order: %s", i, r.Archive)
+		}
+		if seenDirs[r.OutputDir] {
+			t.Fatalf("two archives wrote to the same directory: %s", r.OutputDir)
+		}
+		seenDirs[r.OutputDir] = true
+		if _, err := os.ReadFile(filepath.Join(r.OutputDir, "etc", "passwd")); err != nil {
+			t.Fatalf("result %d: extracted passwd missing: %v", i, err)
+		}
+	}
+}
+
+// TestExtractImagesBatchNameCollision checks that archives sharing a file name
+// (which resolve to the same output directory) are not extracted concurrently:
+// the second one reports the existing directory instead of racing a writer.
+func TestExtractImagesBatchNameCollision(t *testing.T) {
+	root := t.TempDir()
+	d1 := filepath.Join(root, "one")
+	d2 := filepath.Join(root, "two")
+	for _, d := range []string{d1, d2} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeTestImageNamed(t, d, "same.tar")
+	}
+	out := t.TempDir()
+
+	results, err := extractImages(context.Background(), &ExtractArgs{
+		Archive: filepath.Join(root, "*", "same.tar"), Output: out, BufferSize: 1 << 16,
+	})
+	if err != nil && len(results) == 0 {
+		t.Fatalf("batch extract: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0].Error != "" {
+		t.Fatalf("first archive failed: %s", results[0].Error)
+	}
+	if results[1].Error == "" {
+		t.Fatalf("second archive with a colliding name should report a conflict")
 	}
 }

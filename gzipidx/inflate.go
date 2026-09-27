@@ -746,16 +746,24 @@ func (s *scanner) dynamicBlock() error {
 func (s *scanner) huffmanBlock() error {
 	bb, bc := s.bitBuf, s.bitCnt
 	in, inPos, inN := s.in, s.inPos, s.inN
-	tb := int64(0) // bits consumed since the last sync
+	out := s.out
 	lit, dst := &s.lit, &s.dist
 
+	// Bit accounting without per-symbol counters: the bits consumed since the
+	// block started are exactly the bits loaded into the register minus the
+	// ones still buffered, so a bias computed once here turns the total into
+	// one multiply and subtract per block instead of one add per symbol.
+	bias := s.totalBits + int64(bc)
+	loaded := 0 // bytes pulled into the bit register in this block
+
 	sync := func() {
-		s.totalBits += tb
-		tb = 0
+		s.totalBits = bias + int64(loaded)*8 - int64(bc)
 		s.bitBuf, s.bitCnt, s.inPos, s.inN = bb, bc, inPos, inN
+		s.out = out
 	}
 	reload := func() {
 		bb, bc, in, inPos, inN = s.bitBuf, s.bitCnt, s.in, s.inPos, s.inN
+		out = s.out
 	}
 
 	for {
@@ -768,6 +776,7 @@ func (s *scanner) huffmanBlock() error {
 				bb |= binary.LittleEndian.Uint64(in[inPos:]) << bc
 				k := (63 - bc) >> 3
 				inPos += int(k)
+				loaded += int(k)
 				bc += k * 8
 				bb &= 1<<bc - 1
 				continue
@@ -775,6 +784,7 @@ func (s *scanner) huffmanBlock() error {
 			if inPos < inN {
 				bb |= uint64(in[inPos]) << bc
 				inPos++
+				loaded++
 				bc += 8
 				continue
 			}
@@ -792,10 +802,8 @@ func (s *scanner) huffmanBlock() error {
 		sym := uint16(0)
 		if e := lit.fast[bb&(1<<fastBits-1)]; e != 0 {
 			sym = uint16(e)
-			nb := uint(e >> 16)
-			bb >>= nb
-			bc -= nb
-			tb += int64(nb)
+			bb >>= uint(e >> 16)
+			bc -= uint(e >> 16)
 		} else {
 			got, nb, ok := decodeCanonical(lit, bb)
 			if !ok {
@@ -805,16 +813,17 @@ func (s *scanner) huffmanBlock() error {
 			sym = got
 			bb >>= nb
 			bc -= nb
-			tb += int64(nb)
 		}
 		if sym < 256 {
-			if len(s.out) >= flushThreshold {
+			if len(out) >= flushThreshold {
+				s.out = out
 				if err := s.flushOut(); err != nil {
 					sync()
 					return err
 				}
+				out = s.out
 			}
-			s.out = append(s.out, byte(sym))
+			out = append(out, byte(sym))
 			continue
 		}
 		if sym == 256 {
@@ -834,16 +843,13 @@ func (s *scanner) huffmanBlock() error {
 			length += int32(bb & (1<<ne - 1))
 			bb >>= ne
 			bc -= ne
-			tb += int64(ne)
 		}
 
 		dsym := uint16(0)
 		if e := dst.fast[bb&(1<<fastBits-1)]; e != 0 {
 			dsym = uint16(e)
-			nb := uint(e >> 16)
-			bb >>= nb
-			bc -= nb
-			tb += int64(nb)
+			bb >>= uint(e >> 16)
+			bc -= uint(e >> 16)
 		} else {
 			got, nb, ok := decodeCanonical(dst, bb)
 			if !ok {
@@ -853,7 +859,6 @@ func (s *scanner) huffmanBlock() error {
 			dsym = got
 			bb >>= nb
 			bc -= nb
-			tb += int64(nb)
 		}
 		if int(dsym) >= len(distBase) {
 			sync()
@@ -864,21 +869,22 @@ func (s *scanner) huffmanBlock() error {
 			distance += int32(bb & (1<<de - 1))
 			bb >>= de
 			bc -= de
-			tb += int64(de)
 		}
 
-		if len(s.out) >= flushThreshold {
+		if len(out) >= flushThreshold {
+			s.out = out
 			if err := s.flushOut(); err != nil {
 				sync()
 				return err
 			}
+			out = s.out
 		}
-		start := len(s.out)
+		start := len(out)
 		if int(distance) > start || int(distance) > maxWindow {
 			sync()
 			return errCorrupt
 		}
-		s.out = s.out[:start+int(length)]
+		out = out[:start+int(length)]
 		src := start - int(distance)
 		switch {
 		case distance >= 8 && length <= 8:
@@ -886,12 +892,12 @@ func (s *scanner) huffmanBlock() error {
 			// memmove call. Slicing past the match is fine (it stays inside
 			// the allocated buffer) and the extra bytes are overwritten by
 			// the next write; src+8 <= start because distance >= 8.
-			binary.LittleEndian.PutUint64(s.out[start:start+8], binary.LittleEndian.Uint64(s.out[src:src+8]))
+			binary.LittleEndian.PutUint64(out[start:start+8], binary.LittleEndian.Uint64(out[src:src+8]))
 		case distance >= 16 && length <= 16:
-			binary.LittleEndian.PutUint64(s.out[start:start+8], binary.LittleEndian.Uint64(s.out[src:src+8]))
-			binary.LittleEndian.PutUint64(s.out[start+8:start+16], binary.LittleEndian.Uint64(s.out[src+8:src+16]))
+			binary.LittleEndian.PutUint64(out[start:start+8], binary.LittleEndian.Uint64(out[src:src+8]))
+			binary.LittleEndian.PutUint64(out[start+8:start+16], binary.LittleEndian.Uint64(out[src+8:src+16]))
 		case distance >= length:
-			copy(s.out[start:], s.out[src:src+int(length)])
+			copy(out[start:], out[src:src+int(length)])
 		default:
 			// Overlapping match: copy in chunks that double the available
 			// run, each a memmove the runtime can vectorize.
@@ -900,7 +906,7 @@ func (s *scanner) huffmanBlock() error {
 				if n > int(distance) {
 					n = int(distance)
 				}
-				copy(s.out[start+i:start+i+n], s.out[src+i:src+i+n])
+				copy(out[start+i:start+i+n], out[src+i:src+i+n])
 				i += n
 			}
 		}
