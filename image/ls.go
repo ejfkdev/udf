@@ -14,15 +14,38 @@ import (
 	"github.com/ejfkdev/udf/types"
 )
 
+// maxBufferedLayerHeaders bounds the two-phase merge (parse every layer in
+// one sequential pass, then merge in manifest order). Larger images fall back
+// to per-layer reads so memory stays reasonable.
+const maxBufferedLayerHeaders = 300000
+
 // BuildFileSystem merges all layers of the image into an in-memory tree
 // without writing anything to disk.
+//
+// Compressed archives make random access expensive: reaching one layer means
+// decompressing everything before it, and manifest layer order generally does
+// not match the archive's physical order, so a per-layer read costs one pass
+// per layer. When the archive supports sequential reading, every layer is
+// instead parsed in a single pass and merged afterwards.
 func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.Node, error) {
 	archive, err := arch.Open(imageTarPath)
 	if err != nil {
 		return nil, err
 	}
 
+	if tree, ok := buildFileSystemBulk(archive, meta); ok {
+		return tree, nil
+	}
+
+	source := newLayerStreamSource(archive)
+	if source != nil {
+		defer source.Close()
+	}
+
 	openLayer := func(layerName string) (io.Reader, func(), error) {
+		if source != nil {
+			return source.OpenLayer(layerName)
+		}
 		rc, _, err := archive.Open(layerName)
 		if err != nil {
 			return nil, func() {}, err
@@ -31,6 +54,53 @@ func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.No
 	}
 
 	return fsview.Build(meta.LayerOrder, openLayer)
+}
+
+// buildFileSystemBulk parses every layer during one sequential pass and then
+// merges them in manifest order. It reports false when the archive cannot be
+// read sequentially, a layer is missing, or the entry budget is exceeded; the
+// caller then falls back to per-layer reads.
+func buildFileSystemBulk(archive arch.Archive, meta *types.ImageMetadata) (*fsview.Node, bool) {
+	seq := arch.SequentialOf(archive)
+	if seq == nil {
+		return nil, false
+	}
+	defer seq.Close()
+
+	want := make(map[string]bool, len(meta.LayerOrder))
+	for _, name := range meta.LayerOrder {
+		want[name] = true
+	}
+
+	layers := make(map[string]*fsview.ParsedLayer, len(want))
+	buffered := 0
+	for {
+		name, _, r, err := seq.Next()
+		if err != nil {
+			break
+		}
+		if !want[name] || layers[name] != nil {
+			continue
+		}
+		parsed, err := fsview.ParseLayer(r)
+		if err != nil {
+			return nil, false
+		}
+		buffered += parsed.HeaderCount()
+		if buffered > maxBufferedLayerHeaders {
+			return nil, false
+		}
+		layers[name] = parsed
+	}
+
+	if len(layers) != len(want) {
+		return nil, false
+	}
+	tree, err := fsview.BuildParsed(meta.LayerOrder, layers)
+	if err != nil {
+		return nil, false
+	}
+	return tree, true
 }
 
 // ListArchive lists the directory (or single file) at treePath inside an

@@ -23,7 +23,28 @@ import (
 //
 // Unlike the docker-save path, a plain archive is a flat list of files with no
 // layered rootfs, so it is listed and extracted through a single flat tree.
+//
+// The verdict is cached (keyed by path, size and mtime) because classifying a
+// compressed tar probes for manifest.json, which can sit at the very end of
+// the stream and cost a full decompression.
 func ClassifyInput(path string) string {
+	key := cacheKeyFor(path, "class")
+	var cached cachedClass
+	if loadCachedJSON(key, &cached) {
+		return cached.Class
+	}
+
+	class := classifyInputUncached(path)
+	storeCachedJSON(key, cachedClass{Class: class})
+	return class
+}
+
+// cachedClass is the on-disk form of a ClassifyInput result.
+type cachedClass struct {
+	Class string `json:"class"`
+}
+
+func classifyInputUncached(path string) string {
 	if arch.IsOCILayout(path) {
 		return "image"
 	}
@@ -56,7 +77,15 @@ type PlainInfo struct {
 }
 
 // PlainArchiveInfo builds a summary of a plain archive without extraction.
+// The result is cached because listing a compressed archive requires a full
+// pass over its stream.
 func PlainArchiveInfo(path string) (*PlainInfo, error) {
+	key := cacheKeyFor(path, "plaininfo")
+	var cached PlainInfo
+	if loadCachedJSON(key, &cached) {
+		return &cached, nil
+	}
+
 	ar, err := arch.Open(path)
 	if err != nil {
 		return nil, err
@@ -73,6 +102,7 @@ func PlainArchiveInfo(path string) (*PlainInfo, error) {
 			info.TotalSize += e.Size
 		}
 	}
+	storeCachedJSON(key, info)
 	return info, nil
 }
 

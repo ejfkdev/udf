@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.6.2] - 2026-09-28
+
+### Changed
+
+- Much faster `info`/`ls`/`cp`/`extract` on large image archives:
+  - the input class (`image` vs `archive`) is cached; before, every command
+    probed for `manifest.json`, which can sit at the very end of a compressed
+    archive and cost a full decompression each time
+  - plain-archive `info` summaries are cached as well
+  - image layers are merged from a single sequential pass over the archive
+    (parse every layer, then merge in manifest order) instead of one
+    decompression per layer, because manifest order rarely matches archive
+    order and every random access costs a full decompression
+  - `cp` and `extract` write each path once, in the archive's physical order,
+    with deferred hardlink resolution — no per-layer random reads
+  - measured on a 2.1 GB docker-save `tar.gz` (26 images, 14 layers, 5.5 GB
+    decompressed stream): `info` 17-38s -> 0.02s warm; `ls` 2m41s -> 18.6s per
+    new path, 0.02s cached; single-file `cp` 2m39s -> 35s; `cp /etc` (451
+    entries) 3m33s -> 36s; whole-image `extract` 2m31s -> 36s. Extracted trees
+    verified byte-identical to the previous implementation
+
 ## [v0.6.1] - 2026-09-15
 
 ### Changed

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 
 	"github.com/ejfkdev/udf/fsutil"
 	"github.com/ejfkdev/udf/fsview"
@@ -59,19 +60,82 @@ func ExtractPath(imageTarPath string, meta *types.ImageMetadata, sourcePath, des
 	var dirs []fsutil.DirMetadata
 	var count int
 
-	for _, layerName := range meta.LayerOrder {
-		if len(plan.byLayer[layerName]) == 0 {
-			continue
+	// Every selected path belongs to exactly one layer, so the entries can be
+	// written in the archive's physical order — one sequential pass instead of
+	// a random-access open per layer (manifest order rarely matches archive
+	// order, and each random open costs a full decompression of everything
+	// before it). Archives without sequential support keep the per-layer path.
+	if done, err := extractSelectionSeq(plan, archive, buf, &dirs, &count); err != nil {
+		return count, err
+	} else if !done {
+		stream := newLayerStreamSource(archive)
+		if stream != nil {
+			defer stream.Close()
 		}
-		if err := extractLayerEntries(plan, layerName, buf, &dirs, &count); err != nil {
-			return count, err
+		for _, layerName := range meta.LayerOrder {
+			if len(plan.byLayer[layerName]) == 0 {
+				continue
+			}
+			if err := extractLayerEntries(plan, stream, layerName, buf, &dirs, &count); err != nil {
+				return count, err
+			}
 		}
+	}
+
+	if err := plan.resolveDeferredLinks(buf); err != nil {
+		return count, err
 	}
 
 	if err := fsutil.ApplyDirMetadata(dirs); err != nil {
 		return count, fmt.Errorf("apply directory metadata: %w", err)
 	}
 	return count, nil
+}
+
+// extractSelectionSeq writes the whole selection during one sequential pass
+// over the archive. It reports done=false when the archive has no sequential
+// reader, leaving the caller to use per-layer opens.
+func extractSelectionSeq(plan *extractPlan, archive arch.Archive, buf []byte, dirs *[]fsutil.DirMetadata, count *int) (bool, error) {
+	seq := arch.SequentialOf(archive)
+	if seq == nil {
+		return false, nil
+	}
+	defer seq.Close()
+
+	wanted := make(map[string]bool, len(plan.byLayer))
+	for layerName, nodes := range plan.byLayer {
+		if len(nodes) > 0 {
+			wanted[layerName] = true
+		}
+	}
+
+	for {
+		name, _, r, err := seq.Next()
+		if err != nil {
+			break
+		}
+		if !wanted[name] {
+			continue
+		}
+		if err := applyLayerEntries(plan, name, r, buf, dirs, count); err != nil {
+			return true, err
+		}
+		delete(wanted, name)
+		if len(wanted) == 0 {
+			// Everything selected has been written; the rest of the stream
+			// (often most of it) never needs decompressing.
+			return true, nil
+		}
+	}
+	if len(wanted) > 0 {
+		missing := make([]string, 0, len(wanted))
+		for name := range wanted {
+			missing = append(missing, name)
+		}
+		sort.Strings(missing)
+		return true, fmt.Errorf("layers not found in archive: %v", missing)
+	}
+	return true, nil
 }
 
 type extractPlan struct {
@@ -82,6 +146,7 @@ type extractPlan struct {
 	fileTarget string
 	selected   map[*fsview.Node]string            // node -> path relative to destRoot
 	byLayer    map[string]map[string]*fsview.Node // layer -> clean entry path
+	deferred   []deferredLink                     // hardlinks waiting for their source to land
 }
 
 func makeExtractPlan(tree *fsview.Node, archive arch.Archive, srcNode *fsview.Node, srcRel, destPath string) (*extractPlan, error) {
@@ -159,16 +224,34 @@ func (p *extractPlan) inSelection(node *fsview.Node) bool {
 }
 
 // extractLayerEntries streams one layer once, applying the tar entries that
-// define nodes of the selection. Tar order is preserved, so within a layer a
-// hardlink source normally appears before the link that references it.
-func extractLayerEntries(plan *extractPlan, layerName string, buf []byte, dirs *[]fsutil.DirMetadata, count *int) error {
-	rc, _, err := plan.archive.Open(layerName)
-	if err != nil {
-		return fmt.Errorf("open layer %s: %w", layerName, err)
+// define nodes of the selection. The layer bytes come from the shared
+// sequential source when available, otherwise from a random-access open.
+func extractLayerEntries(plan *extractPlan, stream *layerStreamSource, layerName string, buf []byte, dirs *[]fsutil.DirMetadata, count *int) error {
+	var raw io.Reader
+	var closeFn func()
+	if stream != nil {
+		var err error
+		raw, closeFn, err = stream.OpenRaw(layerName)
+		if err != nil {
+			return err
+		}
+	} else {
+		rc, _, err := plan.archive.Open(layerName)
+		if err != nil {
+			return fmt.Errorf("open layer %s: %w", layerName, err)
+		}
+		raw, closeFn = rc, func() { _ = rc.Close() }
 	}
-	r, closeFn, err := layer.OpenLayerReader(rc)
+	defer closeFn()
+
+	return applyLayerEntries(plan, layerName, raw, buf, dirs, count)
+}
+
+// applyLayerEntries applies the selected entries of one layer, reading the
+// layer's stored bytes from r (compression is handled here).
+func applyLayerEntries(plan *extractPlan, layerName string, raw io.Reader, buf []byte, dirs *[]fsutil.DirMetadata, count *int) error {
+	r, closeFn, err := layer.OpenLayerReader(raw)
 	if err != nil {
-		_ = rc.Close()
 		return fmt.Errorf("open layer %s: %w", layerName, err)
 	}
 	defer closeFn()
@@ -255,9 +338,41 @@ func (p *extractPlan) applyHardlink(node *fsview.Node, target string, hdr *tar.H
 		}
 		if err := linkTo(srcTarget, target); err == nil {
 			return nil
+		} else if _, statErr := os.Lstat(srcTarget); os.IsNotExist(statErr) {
+			// 条目按归档物理顺序写出，源可能还没落盘：延后到整轮结束后补链，
+			// 避免为此做一次昂贵的随机访问拷贝。
+			p.deferred = append(p.deferred, deferredLink{src: src, node: node, target: target})
+			return nil
 		}
 	}
 	return p.copySourceContent(src, target, buf)
+}
+
+// deferredLink is a hardlink whose in-selection source was not yet written
+// when the entry was processed (archive order differs from layer order).
+type deferredLink struct {
+	src    *fsview.Node
+	node   *fsview.Node
+	target string
+}
+
+// resolveDeferredLinks links deferred hardlinks now that every selected path
+// exists on disk, falling back to a content copy when linking fails.
+func (p *extractPlan) resolveDeferredLinks(buf []byte) error {
+	for _, d := range p.deferred {
+		srcTarget, err := fsutil.ResolveSafePath(p.destRoot, p.selected[d.src])
+		if err != nil {
+			return err
+		}
+		if err := linkTo(srcTarget, d.target); err == nil {
+			continue
+		}
+		if err := p.copySourceContent(d.src, d.target, buf); err != nil {
+			return fmt.Errorf("resolve hardlink %s: %w", d.node.Path, err)
+		}
+	}
+	p.deferred = nil
+	return nil
 }
 
 // linkTo creates a hardlink at target pointing to srcTarget, with semantics
