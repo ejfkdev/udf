@@ -60,11 +60,17 @@ func classifyInputUncached(path string) string {
 			// every member's offset, and building it once leaves random
 			// access for every command that follows.
 			if r, ok := ensureImageIndex(path); ok {
-				defer r.Close()
-				if _, found := readIndexedEntry(r, "manifest.json"); found {
-					return "image"
+				data, err := readIndexedEntry(r, "manifest.json")
+				if err == nil {
+					if data != nil {
+						return "image"
+					}
+					_ = r.Close()
+					return "archive" // the index directory is complete
 				}
-				return "archive" // the index directory is complete
+				// The index could not answer: fall through to the sequential
+				// probe rather than mistaking an image for a plain archive.
+				_ = r.Close()
 			}
 			if ar, err := arch.Open(path); err == nil {
 				if _, _, e := ar.Open("manifest.json"); e == nil {

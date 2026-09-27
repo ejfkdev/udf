@@ -2,6 +2,7 @@ package image
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -32,6 +33,13 @@ func ScanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata
 	return meta, nil
 }
 
+// errIndexRead marks a failure to read a member through the index — a stale or
+// damaged index, or a member the index does not know. Only this warrants
+// reading the archive sequentially: any other error (a selection that needs a
+// tag, a malformed manifest) would simply be produced again, at the cost of a
+// whole decompression.
+var errIndexRead = errors.New("index read failed")
+
 func scanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata, error) {
 	// On a large gzip tar the manifest usually sits at the end, so reading it
 	// through the general-purpose reader decompresses the whole archive — and
@@ -40,8 +48,9 @@ func scanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata
 	// every later command benefits too.
 	if r, ok := ensureImageIndex(imageTarPath); ok {
 		defer r.Close()
-		if meta, err := scanImageMetadataIndexed(r, sel); err == nil {
-			return meta, nil
+		meta, err := scanImageMetadataIndexed(r, sel)
+		if err == nil || !errors.Is(err, errIndexRead) {
+			return meta, err
 		}
 	}
 	return scanImageMetadataSequential(imageTarPath, sel)
@@ -50,8 +59,11 @@ func scanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata
 // scanImageMetadataIndexed reads manifest.json and the selected config from an
 // index-backed reader.
 func scanImageMetadataIndexed(r *gzipidx.Reader, sel Selection) (*types.ImageMetadata, error) {
-	manifestBytes, ok := readIndexedEntry(r, "manifest.json")
-	if !ok {
+	manifestBytes, err := readIndexedEntry(r, "manifest.json")
+	if err != nil {
+		return nil, err
+	}
+	if manifestBytes == nil {
 		return nil, fmt.Errorf("manifest.json not found")
 	}
 	manifest, imageIndex, err := parseManifest(manifestBytes, sel)
@@ -59,23 +71,32 @@ func scanImageMetadataIndexed(r *gzipidx.Reader, sel Selection) (*types.ImageMet
 		return nil, err
 	}
 	item := manifest[imageIndex]
-	configBytes, _ := readIndexedEntry(r, item.Config)
+	configBytes, err := readIndexedEntry(r, item.Config)
+	if err != nil {
+		return nil, err
+	}
+	if configBytes == nil {
+		return nil, fmt.Errorf("entry %s not found in archive", item.Config)
+	}
 	return buildImageMetadata(manifest, imageIndex, item, configBytes)
 }
 
-// readIndexedEntry returns the bytes of one tar member from an index.
-func readIndexedEntry(r *gzipidx.Reader, name string) ([]byte, bool) {
+// readIndexedEntry returns the bytes of one tar member from an index. A nil
+// slice with a nil error means the index has no such member; a non-nil error
+// means the member exists but could not be read, and the caller should fall
+// back to reading the archive.
+func readIndexedEntry(r *gzipidx.Reader, name string) ([]byte, error) {
 	for _, e := range r.Index().Entries {
 		if e.Name != name {
 			continue
 		}
 		data, err := r.ReadRange(e.OutOff, e.Size)
 		if err != nil {
-			return nil, false
+			return nil, fmt.Errorf("%w: %s: %v", errIndexRead, name, err)
 		}
-		return data, true
+		return data, nil
 	}
-	return nil, false
+	return nil, nil
 }
 
 func scanImageMetadataSequential(imageTarPath string, sel Selection) (*types.ImageMetadata, error) {

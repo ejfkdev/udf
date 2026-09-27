@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.7.1] - 2026-09-28
+
+### Fixed
+
+- `info` (and every command that reads the image metadata) no longer decompresses
+  the whole archive when the index already answered. Asking a multi-image
+  archive for one of its images without `-t`/`-i` is an error, and that error —
+  or any other error that reading would produce again — was treated as "the
+  index cannot serve this" and retried through the sequential reader, so each
+  call cost an index pass plus a full decompression and the error was never
+  cached. On the 2.1 GB safeline archive: the first `info` 29.6s and its repeat
+  18.2s, now 11.6s and 0.08s. A genuine index failure (a stale or damaged index)
+  still falls back.
+- Input classification no longer misreads an image as a plain archive when the
+  index cannot read `manifest.json`: a failed read now falls through to the
+  sequential probe instead of reporting "no manifest.json here".
+
+
 ## [v0.7.0] - 2026-09-28
 
 ### Added
