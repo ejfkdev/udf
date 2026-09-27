@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
-## [v0.8.0] - 2026-09-28
+## [v0.7.2] - 2026-09-28
 
 ### Added
 
