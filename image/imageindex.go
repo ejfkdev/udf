@@ -1,6 +1,7 @@
 package image
 
 import (
+	"archive/tar"
 	"fmt"
 	"io"
 	"os"
@@ -74,9 +75,29 @@ func ensureImageIndex(imageTarPath string) (*gzipidx.Reader, bool) {
 		}
 	}
 
-	ix, err := gzipidx.Build(imageTarPath, gzipidx.BuildOptions{})
+	// While scanning, also collect the directories of the members that are
+	// themselves tars: they are the layers, and the caller usually wants them
+	// right away (to list or extract the merged rootfs). Parsing them from the
+	// captured header bytes avoids decompressing every layer a second time.
+	// Members that cannot be captured faithfully simply stay absent and are
+	// read through the index as before.
+	captured := make(map[string]*fsview.ParsedLayer)
+	nested := &gzipidx.NestedOptions{
+		Members: func(_ string, size int64, head []byte) bool {
+			return size >= minNestedMemberSize && gzipidx.LooksLikeTarHeader(head)
+		},
+		Headers: func(name string, headers []*tar.Header) error {
+			captured[name] = fsview.NewParsedLayer(headers)
+			return nil
+		},
+	}
+
+	ix, err := gzipidx.Build(imageTarPath, gzipidx.BuildOptions{Nested: nested})
 	if err != nil || !ix.Usable() {
 		return nil, false
+	}
+	if len(captured) > 0 {
+		capturedLayers.Store(cacheKeyFor(imageTarPath, "gzipidx"), captured)
 	}
 	if err := os.MkdirAll(idxDir, 0o755); err == nil {
 		_ = ix.Save(path)
@@ -86,6 +107,35 @@ func ensureImageIndex(imageTarPath string) (*gzipidx.Reader, bool) {
 		return nil, false
 	}
 	return r, true
+}
+
+// minNestedMemberSize is the smallest tar member worth capturing as a nested
+// tar stream: below it there is no room even for a header and a terminator.
+const minNestedMemberSize = 1024
+
+// capturedLayers holds the layer directories that the index build captured in
+// this process, keyed like the index cache. Only the command that built the
+// index has them — every later command reads the layers through the index —
+// and they are deliberately not persisted: the index stays small.
+var capturedLayers sync.Map // string -> map[string]*fsview.ParsedLayer
+
+// capturedLayerDirectories returns the layers of layerOrder when this process
+// captured all of them while building the index.
+func capturedLayerDirectories(imageTarPath string, layerOrder []string) (map[string]*fsview.ParsedLayer, bool) {
+	val, ok := capturedLayers.Load(cacheKeyFor(imageTarPath, "gzipidx"))
+	if !ok {
+		return nil, false
+	}
+	all, ok := val.(map[string]*fsview.ParsedLayer)
+	if !ok {
+		return nil, false
+	}
+	for _, name := range layerOrder {
+		if _, ok := all[name]; !ok {
+			return nil, false
+		}
+	}
+	return all, true
 }
 
 // openIndexedLayer opens a layer's stored bytes through the index: the

@@ -18,6 +18,13 @@ type ParsedLayer struct {
 // use it to bound how much is buffered.
 func (l *ParsedLayer) HeaderCount() int { return len(l.headers) }
 
+// NewParsedLayer wraps headers that were parsed elsewhere — for instance from
+// the header bytes a gzip index build captured while scanning — so they can be
+// merged the same way a layer read from the archive would be.
+func NewParsedLayer(headers []*tar.Header) *ParsedLayer {
+	return &ParsedLayer{headers: headers}
+}
+
 // ParseLayer reads all tar headers from r, discarding file data.
 func ParseLayer(r io.Reader) (*ParsedLayer, error) {
 	tr := tar.NewReader(r)

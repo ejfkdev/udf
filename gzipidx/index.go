@@ -63,6 +63,11 @@ type BuildOptions struct {
 	CandidateSpacing int64
 	// NoDirectory skips recording tar member offsets.
 	NoDirectory bool
+	// Nested, when set, also parses selected tar members of the scanned
+	// stream as nested tar streams during the same pass (see NestedOptions).
+	// It needs the directory walk, so it is ignored together with
+	// NoDirectory.
+	Nested *NestedOptions
 	// Progress, when set, receives the decompressed offset.
 	Progress func(int64)
 }
@@ -94,7 +99,11 @@ func Build(path string, opts BuildOptions) (*Index, error) {
 	}
 
 	ix := &Index{FileSize: st.Size(), DeflateStart: headerSize}
-	scanner := &dirScanner{enabled: !opts.NoDirectory}
+	nested := opts.Nested
+	if opts.NoDirectory {
+		nested = nil
+	}
+	scanner := &dirScanner{enabled: !opts.NoDirectory, nested: nested}
 
 	var (
 		cands    []candidate
@@ -152,6 +161,11 @@ func Build(path string, opts BuildOptions) (*Index, error) {
 	}
 	ix.TotalOut = total
 	scanner.finish(&ix.Entries)
+	if nested != nil && nested.Headers != nil {
+		if err := reportNested(scanner, nested); err != nil {
+			return nil, err
+		}
+	}
 
 	// Space the captured candidates evenly over the stream.
 	ix.Checks = resampleCandidates(cands, ix.TotalOut, opts.Checkpoints)
@@ -495,6 +509,62 @@ type dirScanner struct {
 	accept    bool
 	gnuLong   string
 	capture   []byte
+
+	// nested capture of the tar members that are themselves tar streams
+	nested  *NestedOptions
+	caps    []*nestedCapture
+	capUsed int64
+	peek    *pendingHead
+	cur     *nestedCapture
+}
+
+// pendingHead is a member whose first block is collected so the caller can
+// decide whether its payload should be captured as a nested tar stream.
+type pendingHead struct {
+	name string
+	size int64
+	buf  []byte
+}
+
+func (s *dirScanner) beginHead(name string, size int64) {
+	if s.nested == nil || s.nested.Members == nil {
+		return
+	}
+	s.peek = &pendingHead{name: name, size: size}
+}
+
+// decideCapture asks the caller about the member whose head has been collected
+// (or whose payload ended first) and starts capturing it.
+func (s *dirScanner) decideCapture() {
+	head := s.peek
+	s.peek = nil
+	if head == nil || s.capUsed >= s.nested.budget() {
+		return
+	}
+	if !s.nested.Members(head.name, head.size, head.buf) {
+		return
+	}
+	c := &nestedCapture{name: head.name}
+	s.caps = append(s.caps, c)
+	s.cur = c
+	s.feedCapture(head.buf)
+}
+
+// feedCapture passes payload bytes to the capture in progress, dropping it
+// when it would exceed the budget (the member then falls back to the index).
+func (s *dirScanner) feedCapture(p []byte) {
+	if s.cur == nil || len(p) == 0 {
+		return
+	}
+	before := len(s.cur.data)
+	s.cur.feed(p)
+	grew := int64(len(s.cur.data) - before)
+	s.capUsed += grew
+	if s.capUsed > s.nested.budget() && !s.cur.abort {
+		s.capUsed -= int64(len(s.cur.data))
+		s.cur.data, s.cur.runs = nil, nil
+		s.cur.abort = true
+	}
 }
 
 var paxPathPrefix = []byte("path=")
@@ -542,6 +612,7 @@ func (s *dirScanner) feed(p []byte) {
 			}
 			if s.accept {
 				s.entries = append(s.entries, Entry{Name: cur, OutOff: s.pos, Size: size})
+				s.beginHead(cur, size)
 			}
 		case 1:
 			n := int64(len(p))
@@ -551,6 +622,21 @@ func (s *dirScanner) feed(p []byte) {
 			if s.skipEntry {
 				s.capture = append(s.capture, p[:n]...)
 			}
+			rest := p[:n]
+			if s.peek != nil {
+				if want := 512 - len(s.peek.buf); want > 0 {
+					take := want
+					if take > len(rest) {
+						take = len(rest)
+					}
+					s.peek.buf = append(s.peek.buf, rest[:take]...)
+					rest = rest[take:]
+				}
+				if len(s.peek.buf) >= 512 || n == s.remain {
+					s.decideCapture()
+				}
+			}
+			s.feedCapture(rest)
 			s.remain -= n
 			s.pos += n
 			p = p[n:]
@@ -574,6 +660,14 @@ func (s *dirScanner) feed(p []byte) {
 }
 
 func (s *dirScanner) finishHeader() {
+	if s.peek != nil {
+		// A member shorter than one block: decide with what was collected.
+		s.decideCapture()
+	}
+	if s.cur != nil {
+		s.cur.done = true
+		s.cur = nil
+	}
 	if !s.skipEntry {
 		s.capture = s.capture[:0]
 		return

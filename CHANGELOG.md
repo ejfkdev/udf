@@ -23,6 +23,19 @@ keep the newest version at the top.
   shift that grid and diverge a few MiB later — and every checkpoint is
   verified against a 64 KiB context before it is stored. Reads fall back to
   the sequential paths whenever the index is missing, unusable or fails.
+- The index build also parses the layers while it scans. A docker-save or OCI
+  archive is a tar of tars, and the layer directories are wanted right after
+  the build; the scan now captures the header blocks of the members that are
+  themselves tars and replays them into `archive/tar` (file contents are
+  skipped, never copied nor decompressed twice), so the merged tree is built
+  from bytes that were already in hand. On the 2.1 GB archive the tree phase
+  goes from 616ms (re-reading the layers through the index, in parallel) to
+  under a millisecond, and the first `ls` from 13.0s to 12.4s. Captures are
+  deliberately best-effort and in-memory only: members whose stream cannot be
+  replayed faithfully (a PAX size override, GNU sparse files, a broken header)
+  or that exceed the capture budget are read through the index as before, and
+  a differential test compares the captured tree with the index tree entry for
+  entry.
 - Input classification, image metadata (`manifest.json`, the selected config)
   and `ls` now go through the same index: on a large gzip archive these
   otherwise decompress the whole stream once each (the manifest sits last), so

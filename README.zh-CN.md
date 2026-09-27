@@ -40,7 +40,7 @@ English version: [README.md](./README.md)
 归档处理：
 
 - 将镜像归档解包为合并后的 `rootfs`；批量提取多个归档时按核并行，结果保持输入顺序
-- 大 gzip 镜像归档的随机访问索引：首条命令用块感知 deflate 扫描器一趟建好索引（解压约 490 MB/s），之后多 GB 的 docker-save `tar.gz` 上 `ls`/`cp`/`cat`/`extract` 都降到几秒以内
+- 大 gzip 镜像归档的随机访问索引：首条命令用块感知 deflate 扫描器一趟建好索引（解压约 500 MB/s）并在同一趟里取出各层目录，之后多 GB 的 docker-save `tar.gz` 上 `ls`/`cp`/`cat`/`extract` 都降到几秒以内
 - 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.tar.xz`、`.tar.bz2`、`.tar.zst`、`.tar.lz4`、`.zip`、`.7z`、`.rar`、`.cpio`（以及 `.cpio.gz`/`.cpio.xz`/`.cpio.zst`，如 initramfs）、`.asar`（Electron）、`.rpm`、`.deb`/`.ipk`、`.cab`（含 `.msi` 内嵌 cab）、`.nar`（Nix）、`.xar`/`.pkg`（macOS 安装器）（以及 `.ppkg` Windows 预配包，OPC/ZIP）
 - 可执行文件封装格式：PyInstaller onefile（CArchive + PYZ，重建 `.pyc`）、Nuitka onefile（尾部附加与内嵌载荷）、.NET single-file 应用（bundle v1/v2/v6，含 deflate）、ZIP 自解压 exe；APK 内的二进制 Android XML（AXML）——`AndroidManifest.xml`、布局文件——自动解码为可读文本 XML
 - 虚拟磁盘镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM、ESD、SWM、FFU、raw/`.img`/`.ami`、OVA、OVF、VMA、SIF、AppImage（ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT，含 LVM2 逻辑卷）
