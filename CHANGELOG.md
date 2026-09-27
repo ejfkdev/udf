@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.7.0] - 2026-09-28
+
+### Added
+
+- Random-access index for large gzip image archives. The first command that
+  needs random layer access scans the archive once with a block-aware deflate
+  scanner and caches a small index (~5 MiB for a 2 GiB archive) holding restart
+  checkpoints at deflate block boundaries plus the tar entry directory; later
+  commands restart the decompressor at the nearest checkpoint instead of
+  decompressing everything before it, and layers are read in parallel.
+  Measured on a 2.1 GB docker-save `tar.gz` (26 images, 5.5 GB decompressed,
+  14 layers): `ls` 18.6s -> 0.8s, single-file `cp` 35s -> 1.3s, `cat` 23s ->
+  1.0s, whole-image `extract` 2m31s -> 4.9s once the index exists (the build
+  costs one extra pass, ~34s for this archive).
+  Checkpoints are recorded only on byte-aligned deflate block boundaries — a
+  stored block consumes the rest of its byte, so a bit-shifted restart would
+  shift that grid and diverge a few MiB later — and every checkpoint is
+  verified against a 64 KiB context before it is stored. Reads fall back to
+  the sequential paths whenever the index is missing, unusable or fails.
+
 ## [v0.6.2] - 2026-09-28
 
 ### Changed

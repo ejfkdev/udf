@@ -89,8 +89,31 @@ func applyImageMerged(imageTarPath string, meta *types.ImageMetadata, outputDir 
 	buf := make([]byte, bufferSize)
 	var dirs []fsutil.DirMetadata
 	var count int
-	if _, err := extractSelectionSeq(plan, archive, buf, &dirs, &count); err != nil {
-		return true, err
+
+	// Layers are read through the index when available: each layer decodes
+	// only its own span instead of a full pass over the archive.
+	indexed := false
+	if ir, ok := ensureImageIndex(imageTarPath); ok {
+		indexed = true
+		for _, layerName := range meta.LayerOrder {
+			src, err := openIndexedLayer(ir, layerName)
+			if err != nil {
+				_ = ir.Close()
+				return true, err
+			}
+			err = applyLayerEntries(plan, layerName, src, buf, &dirs, &count)
+			_ = src.Close()
+			if err != nil {
+				_ = ir.Close()
+				return true, err
+			}
+		}
+		_ = ir.Close()
+	}
+	if !indexed {
+		if _, err := extractSelectionSeq(plan, archive, buf, &dirs, &count); err != nil {
+			return true, err
+		}
 	}
 	if err := plan.resolveDeferredLinks(buf); err != nil {
 		return true, err

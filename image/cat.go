@@ -111,13 +111,27 @@ func ReadArchiveFile(path string, meta *types.ImageMetadata, sourcePath string) 
 		return nil, 0, err
 	}
 
-	rc, _, err := archive.Open(srcNode.Layer)
-	if err != nil {
-		return nil, 0, fmt.Errorf("open layer %s: %w", srcNode.Layer, err)
+	// Read the defining layer through the index when one is available: the
+	// decompressor restarts near the layer instead of decoding everything
+	// before it.
+	var raw io.ReadCloser
+	if ir, ok := ensureImageIndex(path); ok {
+		if lrc, err := openIndexedLayer(ir, srcNode.Layer); err == nil {
+			raw = &indexedLayerSource{layer: lrc, idx: ir}
+		} else {
+			_ = ir.Close()
+		}
 	}
-	r, closeLayer, err := layer.OpenLayerReader(rc)
+	if raw == nil {
+		lrc, _, err := archive.Open(srcNode.Layer)
+		if err != nil {
+			return nil, 0, fmt.Errorf("open layer %s: %w", srcNode.Layer, err)
+		}
+		raw = lrc
+	}
+	r, closeLayer, err := layer.OpenLayerReader(raw)
 	if err != nil {
-		_ = rc.Close()
+		_ = raw.Close()
 		return nil, 0, fmt.Errorf("open layer %s: %w", srcNode.Layer, err)
 	}
 
@@ -129,7 +143,7 @@ func ReadArchiveFile(path string, meta *types.ImageMetadata, sourcePath string) 
 		}
 		if err != nil {
 			closeLayer()
-			_ = rc.Close()
+			_ = raw.Close()
 			return nil, 0, fmt.Errorf("read layer %s: %w", srcNode.Layer, err)
 		}
 		if hdr.Name != srcNode.EntryName {
@@ -139,13 +153,13 @@ func ReadArchiveFile(path string, meta *types.ImageMetadata, sourcePath string) 
 			Reader: io.LimitReader(tr, hdr.Size),
 			closeFn: func() error {
 				closeLayer()
-				return rc.Close()
+				return raw.Close()
 			},
 		}, hdr.Size, nil
 	}
 
 	closeLayer()
-	_ = rc.Close()
+	_ = raw.Close()
 	return nil, 0, fmt.Errorf("entry %s not found in layer %s", srcNode.EntryName, srcNode.Layer)
 }
 

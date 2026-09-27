@@ -33,7 +33,7 @@ func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.No
 		return nil, err
 	}
 
-	if tree, ok := buildFileSystemBulk(archive, meta); ok {
+	if tree, ok := buildFileSystemBulk(archive, imageTarPath, meta); ok {
 		return tree, nil
 	}
 
@@ -60,7 +60,18 @@ func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.No
 // merges them in manifest order. It reports false when the archive cannot be
 // read sequentially, a layer is missing, or the entry budget is exceeded; the
 // caller then falls back to per-layer reads.
-func buildFileSystemBulk(archive arch.Archive, meta *types.ImageMetadata) (*fsview.Node, bool) {
+func buildFileSystemBulk(archive arch.Archive, imageTarPath string, meta *types.ImageMetadata) (*fsview.Node, bool) {
+	// An index makes every layer read independent, so the layers can be
+	// parsed in parallel instead of one long sequential pass.
+	if r, ok := loadImageIndex(imageTarPath); ok {
+		defer r.Close()
+		if layers, ok := parseLayersFromIndex(r, meta.LayerOrder); ok {
+			if tree, err := fsview.BuildParsed(meta.LayerOrder, layers); err == nil {
+				return tree, true
+			}
+		}
+	}
+
 	seq := arch.SequentialOf(archive)
 	if seq == nil {
 		return nil, false

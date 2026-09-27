@@ -60,24 +60,47 @@ func ExtractPath(imageTarPath string, meta *types.ImageMetadata, sourcePath, des
 	var dirs []fsutil.DirMetadata
 	var count int
 
-	// Every selected path belongs to exactly one layer, so the entries can be
-	// written in the archive's physical order — one sequential pass instead of
-	// a random-access open per layer (manifest order rarely matches archive
-	// order, and each random open costs a full decompression of everything
-	// before it). Archives without sequential support keep the per-layer path.
-	if done, err := extractSelectionSeq(plan, archive, buf, &dirs, &count); err != nil {
-		return count, err
-	} else if !done {
-		stream := newLayerStreamSource(archive)
-		if stream != nil {
-			defer stream.Close()
-		}
+	// With an index each layer decodes on its own, so the selection is read
+	// layer by layer; without one the entries are written in the archive's
+	// physical order during a single sequential pass (manifest order rarely
+	// matches archive order, and every random access would then cost a full
+	// decompression).
+	handled := false
+	if ir, ok := ensureImageIndex(imageTarPath); ok {
+		handled = true
 		for _, layerName := range meta.LayerOrder {
 			if len(plan.byLayer[layerName]) == 0 {
 				continue
 			}
-			if err := extractLayerEntries(plan, stream, layerName, buf, &dirs, &count); err != nil {
+			src, err := openIndexedLayer(ir, layerName)
+			if err != nil {
+				_ = ir.Close()
 				return count, err
+			}
+			err = applyLayerEntries(plan, layerName, src, buf, &dirs, &count)
+			_ = src.Close()
+			if err != nil {
+				_ = ir.Close()
+				return count, err
+			}
+		}
+		_ = ir.Close()
+	}
+	if !handled {
+		if done, err := extractSelectionSeq(plan, archive, buf, &dirs, &count); err != nil {
+			return count, err
+		} else if !done {
+			stream := newLayerStreamSource(archive)
+			if stream != nil {
+				defer stream.Close()
+			}
+			for _, layerName := range meta.LayerOrder {
+				if len(plan.byLayer[layerName]) == 0 {
+					continue
+				}
+				if err := extractLayerEntries(plan, stream, layerName, buf, &dirs, &count); err != nil {
+					return count, err
+				}
 			}
 		}
 	}
