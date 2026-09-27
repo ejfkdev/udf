@@ -55,6 +55,17 @@ func classifyInputUncached(path string) string {
 		// Only a tar/tar.gz can be a docker-save archive; those carry a
 		// top-level manifest.json, everything else is a plain archive.
 		if a == "tar" || a == "tar.gz" {
+			// On a large gzip tar manifest.json sits at the end, so looking
+			// for it means decompressing the whole archive. The index knows
+			// every member's offset, and building it once leaves random
+			// access for every command that follows.
+			if r, ok := ensureImageIndex(path); ok {
+				defer r.Close()
+				if _, found := readIndexedEntry(r, "manifest.json"); found {
+					return "image"
+				}
+				return "archive" // the index directory is complete
+			}
 			if ar, err := arch.Open(path); err == nil {
 				if _, _, e := ar.Open("manifest.json"); e == nil {
 					return "image"

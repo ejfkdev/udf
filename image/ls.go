@@ -62,8 +62,10 @@ func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.No
 // caller then falls back to per-layer reads.
 func buildFileSystemBulk(archive arch.Archive, imageTarPath string, meta *types.ImageMetadata) (*fsview.Node, bool) {
 	// An index makes every layer read independent, so the layers can be
-	// parsed in parallel instead of one long sequential pass.
-	if r, ok := loadImageIndex(imageTarPath); ok {
+	// parsed in parallel instead of one long sequential pass. Building it when
+	// missing costs about as much as the sequential pass it replaces, and
+	// leaves every later command with random access.
+	if r, ok := ensureImageIndex(imageTarPath); ok {
 		defer r.Close()
 		if layers, ok := parseLayersFromIndex(r, meta.LayerOrder); ok {
 			if tree, err := fsview.BuildParsed(meta.LayerOrder, layers); err == nil {

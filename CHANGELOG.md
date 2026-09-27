@@ -17,12 +17,33 @@ keep the newest version at the top.
   Measured on a 2.1 GB docker-save `tar.gz` (26 images, 5.5 GB decompressed,
   14 layers): `ls` 18.6s -> 0.8s, single-file `cp` 35s -> 1.3s, `cat` 23s ->
   1.0s, whole-image `extract` 2m31s -> 4.9s once the index exists (the build
-  costs one extra pass, ~34s for this archive).
+  costs one extra pass, ~11s for this archive).
   Checkpoints are recorded only on byte-aligned deflate block boundaries — a
   stored block consumes the rest of its byte, so a bit-shifted restart would
   shift that grid and diverge a few MiB later — and every checkpoint is
   verified against a 64 KiB context before it is stored. Reads fall back to
   the sequential paths whenever the index is missing, unusable or fails.
+- Input classification, image metadata (`manifest.json`, the selected config)
+  and `ls` now go through the same index: on a large gzip archive these
+  otherwise decompress the whole stream once each (the manifest sits last), so
+  the first command on an archive is one index pass instead of several full
+  decompressions. On the same archive: first `cat`/`cp` 109s -> 15s, `info`
+  45s -> 12.6s, `ls` 17.5s -> 13.2s; every later command is unchanged and
+  still sub-second.
+
+### Changed
+
+- The block-aware deflate scanner is about twice as fast (2.1 GB / 5.5 GB
+  stream: 34s -> 11s, 260 -> 490 MB/s of output; ~1.65x the general-purpose
+  flate reader on the same stream). The symbol loop now keeps the bit buffer,
+  input position and output length in locals, refills 48 bits at a time with
+  word-sized loads instead of per-code calls, decodes codes longer than the
+  fast table straight off the bit register, writes literals and matches into
+  the output buffer directly behind one capacity check per symbol group,
+  copies short matches with a single 8-byte load/store instead of a `memmove`
+  call, and reuses its code tables across the tens of thousands of deflate
+  blocks a layer contains. On Unix the compressed stream is read through a
+  read-only file mapping, which avoids copying it through a read buffer.
 
 ## [v0.6.2] - 2026-09-28
 

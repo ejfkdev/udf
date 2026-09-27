@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/ejfkdev/udf/gzipidx"
 	appi18n "github.com/ejfkdev/udf/i18n"
 	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/types"
@@ -32,42 +33,96 @@ func ScanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata
 }
 
 func scanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata, error) {
+	// On a large gzip tar the manifest usually sits at the end, so reading it
+	// through the general-purpose reader decompresses the whole archive — and
+	// reading the config after it starts over from the beginning. Building the
+	// index reads the archive once and serves both from random access, and
+	// every later command benefits too.
+	if r, ok := ensureImageIndex(imageTarPath); ok {
+		defer r.Close()
+		if meta, err := scanImageMetadataIndexed(r, sel); err == nil {
+			return meta, nil
+		}
+	}
+	return scanImageMetadataSequential(imageTarPath, sel)
+}
+
+// scanImageMetadataIndexed reads manifest.json and the selected config from an
+// index-backed reader.
+func scanImageMetadataIndexed(r *gzipidx.Reader, sel Selection) (*types.ImageMetadata, error) {
+	manifestBytes, ok := readIndexedEntry(r, "manifest.json")
+	if !ok {
+		return nil, fmt.Errorf("manifest.json not found")
+	}
+	manifest, imageIndex, err := parseManifest(manifestBytes, sel)
+	if err != nil {
+		return nil, err
+	}
+	item := manifest[imageIndex]
+	configBytes, _ := readIndexedEntry(r, item.Config)
+	return buildImageMetadata(manifest, imageIndex, item, configBytes)
+}
+
+// readIndexedEntry returns the bytes of one tar member from an index.
+func readIndexedEntry(r *gzipidx.Reader, name string) ([]byte, bool) {
+	for _, e := range r.Index().Entries {
+		if e.Name != name {
+			continue
+		}
+		data, err := r.ReadRange(e.OutOff, e.Size)
+		if err != nil {
+			return nil, false
+		}
+		return data, true
+	}
+	return nil, false
+}
+
+func scanImageMetadataSequential(imageTarPath string, sel Selection) (*types.ImageMetadata, error) {
 	archive, err := arch.Open(imageTarPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var manifest []types.ManifestItem
-	var manifestLoaded bool
 	data, err := readEntry(archive, "manifest.json")
-	if err == nil {
-		if err := json.Unmarshal(data, &manifest); err != nil {
-			return nil, fmt.Errorf("parse manifest.json: %w", err)
-		}
-		manifestLoaded = true
-	}
-
-	if !manifestLoaded {
+	if err != nil {
 		return nil, fmt.Errorf("manifest.json not found")
 	}
-
-	imageIndex, err := resolveSelection(manifest, sel)
+	manifest, imageIndex, err := parseManifest(data, sel)
 	if err != nil {
 		return nil, err
 	}
-
 	item := manifest[imageIndex]
+
+	configBytes, err := readNamedEntry(imageTarPath, item.Config)
+	if err != nil {
+		return nil, err
+	}
+	return buildImageMetadata(manifest, imageIndex, item, configBytes)
+}
+
+// parseManifest decodes manifest.json and resolves the requested image.
+func parseManifest(data []byte, sel Selection) ([]types.ManifestItem, int, error) {
+	var manifest []types.ManifestItem
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, 0, fmt.Errorf("parse manifest.json: %w", err)
+	}
+	imageIndex, err := resolveSelection(manifest, sel)
+	if err != nil {
+		return nil, 0, err
+	}
+	return manifest, imageIndex, nil
+}
+
+// buildImageMetadata assembles the metadata from the parsed manifest and the
+// selected image's config bytes.
+func buildImageMetadata(manifest []types.ManifestItem, imageIndex int, item types.ManifestItem, configBytes []byte) (*types.ImageMetadata, error) {
 	meta := &types.ImageMetadata{
 		Index:      imageIndex,
 		Total:      len(manifest),
 		RepoTags:   append([]string(nil), item.RepoTags...),
 		ConfigPath: item.Config,
 		LayerOrder: append([]string(nil), item.Layers...),
-	}
-
-	configBytes, err := readNamedEntry(imageTarPath, item.Config)
-	if err != nil {
-		return nil, err
 	}
 	if len(configBytes) == 0 {
 		return meta, nil

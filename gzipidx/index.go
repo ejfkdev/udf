@@ -130,8 +130,7 @@ func Build(path string, opts BuildOptions) (*Index, error) {
 		return nil
 	}
 
-	src := io.NewSectionReader(f, headerSize, fileSize-headerSize)
-	total, err := ScanBlockBoundaries(src, func(bitPos, outPos int64, window func() []byte) bool {
+	total, err := scanDeflate(path, headerSize, fileSize, func(bitPos, outPos int64, window func() []byte) bool {
 		// A restart point must be byte-aligned: a stored block consumes the
 		// rest of its byte, and a bit-shifted view of the stream would move
 		// that grid, so byte-aligned boundaries are the only ones that resume

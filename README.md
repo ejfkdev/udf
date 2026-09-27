@@ -40,7 +40,7 @@ Three interfaces, one definition:
 Archive handling:
 
 - Extract image archives into a merged `rootfs`
-- Random-access index for large gzip image archives: after one index pass (`ls`/`cp`/`cat`/`extract` on a multi-GB docker-save `tar.gz` drop to well under a few seconds)
+- Random-access index for large gzip image archives: the first command builds it in one pass with a block-aware deflate scanner (~490 MB/s decompressed), after which `ls`/`cp`/`cat`/`extract` on a multi-GB docker-save `tar.gz` drop to well under a few seconds
 - Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz4`, `.zip`, `.7z`, `.rar`, `.cpio` (and `.cpio.gz`/`.cpio.xz`/`.cpio.zst`, e.g. initramfs), `.asar` (Electron), `.rpm`, `.deb`/`.ipk`, `.cab`/`.msi`-embedded cabs, `.nar` (Nix), `.xar`/`.pkg` (macOS installer) (and `.ppkg` Windows provisioning packages, an OPC/ZIP)
 - Executable bundle formats: PyInstaller onefile (CArchive + PYZ, `.pyc` reconstruction), Nuitka onefile (appended and embedded payloads), .NET single-file apps (bundle v1/v2/v6, incl. deflate), ZIP self-extracting executables; binary Android XML (AXML) inside APKs — `AndroidManifest.xml`, layouts — is decoded to readable text XML automatically
 - Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami`, OVA, OVF, VMA, SIF, AppImage (ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes)
