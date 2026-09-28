@@ -87,6 +87,21 @@ disk inputs automatically:
 ./udf ls ./appliance.ova /disk1.vmdk           # then its volumes
 ```
 
+Android images work through the same commands: a `boot.img` (whose ramdisk is
+unpacked in turn), an emulator or device `system.img` — a GPT disk whose
+`super` partition holds the dynamic partitions — and a ramdisk (`ramdisk.img`,
+`initrd`) as a plain cpio:
+
+```text
+./udf ls ./boot.img                            # kernel, ramdisk, dtb, and the ramdisk's files
+./udf ls ./system.img                          # a GPT disk: p1, p2, and inside p2 the dynamic partitions
+./udf ls ./system.img p2/system                # the system partition's root
+./udf cat ./system.img p2/system/system/build.prop
+./udf ls ./super.img                           # a standalone super.img: system, product, vendor, …
+./udf ls ./ramdisk.img                         # a ramdisk (LZ4-legacy cpio) as an archive
+./udf cp ./app.apk resources.arsc ./res.txt    # the compiled resource table, decoded
+```
+
 Supported disk container formats:
 
 - **qcow2** (v2/v3), read-only and streamed

@@ -85,6 +85,18 @@ English version: [README.md](./README.md)
 ./udf ls ./appliance.ova /disk1.vmdk             # 再列出该磁盘的卷
 ```
 
+安卓镜像走同一组命令：`boot.img`（ramdisk 会再展开成里面的文件）、模拟器/真机的 `system.img`（GPT 磁盘，`super` 分区里是各动态分区）、以及 `ramdisk.img`/`initrd`（legacy LZ4 的 cpio，当作归档读）：
+
+```text
+./udf ls ./boot.img                              # 内核、ramdisk、dtb 及 ramdisk 内的文件
+./udf ls ./system.img                            # GPT 磁盘：p1、p2，以及 p2 里的各动态分区
+./udf ls ./system.img p2/system                  # 进 system 分区根目录
+./udf cat ./system.img p2/system/system/build.prop
+./udf ls ./super.img                             # 独立的 super.img：system、product、vendor 等
+./udf ls ./ramdisk.img                           # ramdisk（legacy LZ4 cpio）按归档读
+./udf cp ./app.apk resources.arsc ./res.txt      # 编译后的资源表，解码为文本
+```
+
 支持的磁盘容器格式：
 
 - **qcow2**（v2/v3），只读流式
