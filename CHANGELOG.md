@@ -6,6 +6,16 @@ keep the newest version at the top.
 
 ## [Unreleased]
 
+### Added
+
+- Selecting an image no longer requires the full repo tag. `--tag` (and
+  `-t`/`--repo-tag`, which resolve the same way) accepts any name an image is
+  listed under — a full repo tag, the tail of its path (`chatin/safeline-mgt:latest`),
+  `name:tag`, a repository name, or a bare tag — as long as it is unambiguous; a
+  name matching several images is refused with the list of candidates, so a
+  selection is never a guess. `--image` takes an index like `-i` and a name or
+  tag as well.
+
 ### Changed
 
 - Everything udf derives or unpacks now lives in one per-user directory inside

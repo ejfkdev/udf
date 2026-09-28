@@ -228,7 +228,7 @@ Examples:
 ./udf info -t demo/app:latest ./image.tar   # the detail of one image
 ```
 
-One image (also the form used with `-t`/`--repo-tag` or `-i`/`--image-index`):
+One image (also the form used with `-t`/`--repo_tag` or `-i`/`--image_index`, or `--tag`/`--image`):
 
 ```text
 index           0
@@ -388,8 +388,8 @@ output: /data/demo/bundle/repo_app_1.0
 
 Command flags:
 
-- `-t, --repo-tag` — select the image by `RepoTags` from `manifest.json` (`info`, `ls`, `cp`, `extract`)
-- `-i, --image-index` — select the image by its index in the `manifest.json` array (all commands)
+- `-t, --repo_tag`, `--tag` — select the image by tag: a full `RepoTags` entry, `name:tag`, a repository name or a bare tag, as long as the name is unambiguous (`info`, `ls`, `cp`, `cat`, `xxd`, `extract`)
+- `-i, --image_index`, `--image` — select the image by its index in the `manifest.json` array; `--image` also takes a name or tag (all commands)
 - `-o, --output` — output parent directory (`extract`)
 - `-f, --force` — write into an existing non-empty target directory (`extract`)
 - `-b, --buffer-size` — file copy buffer size in bytes (`cp`, `extract`)
@@ -406,8 +406,29 @@ If an archive contains only one image:
 
 If an archive contains multiple images:
 
-- a selection is required; `udf` is not interactive — without `-t` or `-i` it exits with an error whose message lists the available options
-- pick a value from the error message and re-run with `-t` or `-i`
+- `info` prints the images (one line per image); the commands that need a
+  target (`ls`, `cp`, `cat`, `xxd`, `extract`) print an error that lists the
+  available options
+- select one with any of `--tag` / `-t` / `--repo_tag`, or `--image` / `-i` /
+  `--image_index`
+
+`--tag` accepts any name an image is listed under, as long as it is
+unambiguous — a full repo tag, `name:tag`, a repository name or a bare tag:
+
+```bash
+./udf info --tag swr.example/chaitin/safeline-mgt:latest ./image.tar   # as listed
+./udf info --tag chaitin/safeline-mgt:latest ./image.tar               # tail of the path
+./udf info --tag safeline-mgt:latest ./image.tar                       # name:tag
+./udf info --tag safeline-mgt ./image.tar                              # repository name
+./udf info --tag 15.18 ./image.tar                                     # bare tag, if only one image has it
+./udf info --image 3 ./image.tar                                       # by index
+./udf info --image safeline-luigi:9.1.0-lts ./image.tar                # --image takes a name too
+```
+
+A name that matches more than one image is refused with the list of candidates
+(`"latest" matches more than one image: [1]=…`), so a selection is never a
+guess. `-t`/`--repo_tag` resolve the same way, so full tags keep working and
+shorter ones now work too.
 
 ## Generated Files
 

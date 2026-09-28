@@ -184,17 +184,7 @@ func resolveSelection(manifest []types.ManifestItem, sel Selection) (int, error)
 	}
 
 	if sel.RepoTag != "" {
-		for i, item := range manifest {
-			for _, repoTag := range item.RepoTags {
-				if repoTag == sel.RepoTag {
-					return i, nil
-				}
-			}
-		}
-		return 0, appi18n.NewError("err_repo_tag_not_found", map[string]any{
-			"Tag":       sel.RepoTag,
-			"Available": formatManifestChoices(manifest),
-		}, nil)
+		return matchImageTag(manifest, sel.RepoTag)
 	}
 
 	if sel.ImageIndex >= 0 {
@@ -216,16 +206,130 @@ func resolveSelection(manifest []types.ManifestItem, sel Selection) (int, error)
 	}, nil)
 }
 
-func formatManifestChoices(manifest []types.ManifestItem) string {
-	choices := make([]string, 0, len(manifest))
-	for i, item := range manifest {
-		label := strings.Join(item.RepoTags, ",")
-		if label == "" {
-			label = "<untagged>"
+// matchImageTag resolves the image names a user may type. A full repo tag
+// always matches; beyond that the tail of a repo tag ("name:tag"), a
+// repository name ("name") and a bare tag ("1.2") are accepted as long as they
+// are unambiguous — the answer is never a guess, a clash lists the candidates.
+func matchImageTag(manifest []types.ManifestItem, name string) (int, error) {
+	want := strings.TrimSpace(name)
+	// Each form is looser than the one before; the first that matches decides.
+	// A form may name several shapes of the same repo tag (a tag, and every
+	// path suffix of it), so "group/app:1.2" and "app:1.2" both work.
+	for _, form := range []func(string) []string{
+		func(tag string) []string { return []string{tag} },                   // as written
+		func(tag string) []string { return pathSuffixes(tag) },               // group/app:1.2, app:1.2
+		func(tag string) []string { return pathSuffixes(repoNamePath(tag)) }, // group/app, app
+		func(tag string) []string { return []string{repoTagPart(tag)} },      // 1.2
+	} {
+		var matches []int
+		for i, item := range manifest {
+			if !matchesAny(item.RepoTags, want, form) {
+				continue
+			}
+			if len(matches) == 0 || matches[len(matches)-1] != i {
+				matches = append(matches, i)
+			}
 		}
-		choices = append(choices, fmt.Sprintf("[%d]=%s", i, label))
+		switch len(matches) {
+		case 0:
+			continue
+		case 1:
+			return matches[0], nil
+		default:
+			return 0, appi18n.NewError("err_repo_tag_ambiguous", map[string]any{
+				"Tag":        want,
+				"Candidates": formatMatchingChoices(manifest, matches),
+			}, nil)
+		}
+	}
+	return 0, appi18n.NewError("err_repo_tag_not_found", map[string]any{
+		"Tag":       want,
+		"Available": formatManifestChoices(manifest),
+	}, nil)
+}
+
+// pathSuffixes lists a repo tag or repository path together with every suffix
+// that starts at a path separator, so a user can name the tail of a registry
+// path: "reg.example/group/app:1.2" yields itself, "group/app:1.2" and
+// "app:1.2".
+func pathSuffixes(name string) []string {
+	out := []string{name}
+	for i := 0; i < len(name); i++ {
+		if name[i] == '/' {
+			out = append(out, name[i+1:])
+		}
+	}
+	return out
+}
+
+// repoNamePath returns a repo tag without its tag part, keeping any registry
+// and group path: "reg.example/group/app:1.2" -> "reg.example/group/app".
+func repoNamePath(repoTag string) string {
+	if i := strings.LastIndex(repoTag, ":"); i > strings.LastIndex(repoTag, "/") {
+		return repoTag[:i]
+	}
+	return repoTag
+}
+
+// matchesAny reports whether any of a repo tag's shapes equals want.
+func matchesAny(repoTags []string, want string, form func(string) []string) bool {
+	for _, repoTag := range repoTags {
+		for _, shape := range form(repoTag) {
+			if shape == want && shape != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// repoTagTail returns a repo tag without its registry and path:
+// "reg.example/group/app:1.2" -> "app:1.2".
+func repoTagTail(repoTag string) string {
+	if i := strings.LastIndex(repoTag, "/"); i >= 0 {
+		return repoTag[i+1:]
+	}
+	return repoTag
+}
+
+// repoTagPart returns the tag part of a repo tag, or "" when it has none.
+func repoTagPart(repoTag string) string {
+	tail := repoTagTail(repoTag)
+	i := strings.LastIndex(tail, ":")
+	if i < 0 {
+		return ""
+	}
+	return tail[i+1:]
+}
+
+// formatMatchingChoices lists the images a loose name matched, so an ambiguous
+// one can be resolved by copying a full repo tag.
+func formatMatchingChoices(manifest []types.ManifestItem, indexes []int) string {
+	choices := make([]string, 0, len(indexes))
+	for _, i := range indexes {
+		if i < len(manifest) {
+			choices = append(choices, manifestChoice(manifest, i))
+		}
 	}
 	return strings.Join(choices, "; ")
+}
+
+func formatManifestChoices(manifest []types.ManifestItem) string {
+	choices := make([]string, 0, len(manifest))
+	for i := range manifest {
+		choices = append(choices, manifestChoice(manifest, i))
+	}
+	return strings.Join(choices, "; ")
+}
+
+// manifestChoice renders one image as it is listed in a selection error.
+func manifestChoice(manifest []types.ManifestItem, i int) string {
+	item := manifest[i]
+	label := strings.Join(item.RepoTags, ",")
+	if label == "" {
+		label = "<untagged>"
+	}
+	return fmt.Sprintf("[%d]=%s", i, label)
 }
 
 func readNamedEntry(imageTarPath, targetName string) ([]byte, error) {
@@ -251,7 +355,7 @@ func readEntry(archive arch.Archive, targetName string) ([]byte, error) {
 }
 
 // ImageSummary describes one image of a multi-image archive: enough to tell the
-// images apart and to pick one with -t/--repo-tag or -i/--image-index, without
+// images apart and to pick one with --tag/-t (or --image/-i), without
 // reading every image's config.
 type ImageSummary struct {
 	// Index is the image's position in manifest.json (what -i takes).

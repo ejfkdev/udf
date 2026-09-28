@@ -729,3 +729,60 @@ func writeTestMultiImage(t *testing.T) string {
 	}
 	return imagePath
 }
+
+// TestSelectionFlags covers the friendly spellings: --tag takes any unambiguous
+// name an image is listed under, --image takes an index or a name, and giving
+// two selectors at once is an error rather than a guess.
+func TestSelectionFlags(t *testing.T) {
+	imagePath := writeTestMultiImage(t)
+
+	cases := []struct {
+		name string
+		args InfoArgs
+		want int // expected image index, -1 for an error
+	}{
+		{"tag short name", InfoArgs{Tag: "two", ImageIndex: -1}, 1},
+		{"tag name:tag", InfoArgs{Tag: "two:latest", ImageIndex: -1}, 1},
+		{"tag full repo tag", InfoArgs{Tag: "test/one:latest", ImageIndex: -1}, 0},
+		{"tag bare, shared", InfoArgs{Tag: "latest", ImageIndex: -1}, -1}, // both images carry it
+		{"tag unknown", InfoArgs{Tag: "nope", ImageIndex: -1}, -1},
+		{"image by index", InfoArgs{Image: "1", ImageIndex: -1}, 1},
+		{"image by name", InfoArgs{Image: "one", ImageIndex: -1}, 0},
+		{"image by name:tag", InfoArgs{Image: "two:latest", ImageIndex: -1}, 1},
+		{"repo tag still works", InfoArgs{RepoTag: "test/one:latest", ImageIndex: -1}, 0},
+		{"two selectors", InfoArgs{Tag: "one", ImageIndex: 1}, -1},
+		{"tag and image", InfoArgs{Tag: "one", Image: "1", ImageIndex: -1}, -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := tc.args
+			args.Archive = imagePath
+			got, err := infoImage(context.Background(), &args)
+			if tc.want < 0 {
+				if err == nil {
+					t.Fatalf("expected an error, got %#v", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			detail, ok := got.(*ImageInfoResult)
+			if !ok {
+				t.Fatalf("got %T, want *ImageInfoResult", got)
+			}
+			if detail.Index != tc.want {
+				t.Fatalf("selected image %d, want %d", detail.Index, tc.want)
+			}
+		})
+	}
+
+	// Without a selection the archive is still listed, not an error.
+	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1})
+	if err != nil {
+		t.Fatalf("unselected info: %v", err)
+	}
+	if _, ok := got.([]image.ImageSummary); !ok {
+		t.Fatalf("unselected info returned %T, want the image listing", got)
+	}
+}

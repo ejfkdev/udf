@@ -56,7 +56,7 @@ other = "Disable dynamic progress bar"
 other = "UI language, supported: zh or en"
 
 [err_selection_conflict]
-other = "use only one image selection option: --image-index/-i or --repo-tag/-t"
+other = "use only one image selection option: --tag/-t, --image/-i, --repo_tag or --image_index"
 
 [err_invalid_buffer]
 other = "invalid buffer size: {{.Value}}"
@@ -86,13 +86,16 @@ other = "failed to extract image"
 other = "manifest.json is empty"
 
 [err_repo_tag_not_found]
-other = "the specified RepoTag was not found: {{.Tag}}; available values: {{.Available}}"
+other = "no image matches \"{{.Tag}}\" (a full RepoTag, name:tag, name or tag all work); available values: {{.Available}}"
+
+[err_repo_tag_ambiguous]
+other = "\"{{.Tag}}\" matches more than one image: {{.Candidates}} — use a full RepoTag or an index"
 
 [err_image_index_out_of_range]
 other = "image index is out of range: {{.Index}}; manifest contains {{.Count}} records"
 
 [err_multiple_images_require_selection]
-other = "this archive contains multiple images; please specify one with -t/--repo-tag or -i/--image-index. Available values: {{.Available}}"
+other = "this archive contains multiple images; please specify one with --tag/-t (a full repo tag, name:tag, name or tag) or --image/-i. Available values: {{.Available}}"
 
 [msg_batch_processed]
 other = "Images processed successfully: {{.Count}}"
