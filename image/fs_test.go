@@ -23,15 +23,21 @@ func TestISO9660DetectAndList(t *testing.T) {
 		t.Fatalf("expected iso9660, got %q", got)
 	}
 
-	// A bare filesystem image has a single "disk" volume; list its root.
-	entries, err := ListDisk(path, "/")
+	// A bare filesystem image has a single "disk" volume: a bare path lists
+	// that volume, "/" goes straight to its root.
+	volEntries, err := ListDisk(path, "")
 	if err != nil {
+		t.Fatalf("list volumes: %v", err)
+	}
+	if len(volEntries) != 1 || volEntries[0].FSType != "iso9660" {
+		t.Fatalf("unexpected volume listing: %+v", volEntries)
+	}
+	if entries, err := ListDisk(path, "/"); err != nil {
 		t.Fatalf("list root: %v", err)
+	} else if len(entries) == 1 && entries[0].FSType == "iso9660" {
+		t.Fatalf("\"/\" served the volume list instead of the filesystem root: %+v", entries)
 	}
-	if len(entries) != 1 || entries[0].FSType != "iso9660" {
-		t.Fatalf("unexpected root listing: %+v", entries)
-	}
-	entries, err = ListDisk(path, "/disk")
+	entries, err := ListDisk(path, "/disk")
 	if err != nil {
 		t.Fatalf("list /disk: %v", err)
 	}

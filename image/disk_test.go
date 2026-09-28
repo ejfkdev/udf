@@ -94,6 +94,18 @@ func TestDetectRawFilesystem(t *testing.T) {
 		"exfat":       write(func(b []byte) { copy(b[3:], "EXFAT   ") }),
 		"ext4":        write(func(b []byte) { le.PutUint16(b[1080:], 0xEF53) }),
 		"iso9660":     write(func(b []byte) { copy(b[32769:], "CD001") }),
+		// A GPT disk (an Android system.img, say) has no filesystem magic at
+		// offset 0: only the GPT header at LBA 1 identifies it.
+		"gpt-disk": write(func(b []byte) { copy(b[512:], "EFI PART") }),
+		// A partitioned raw disk: the MBR signature plus one populated,
+		// in-range partition entry.
+		"mbr-disk": write(func(b []byte) {
+			b[510], b[511] = 0x55, 0xAA
+			entry := b[446:462]
+			entry[4] = 0x83 // Linux
+			le.PutUint32(entry[8:], 2048)
+			le.PutUint32(entry[12:], 4096)
+		}),
 	}
 	for name, p := range positive {
 		if !detectRawFilesystem(p) {
@@ -102,6 +114,29 @@ func TestDetectRawFilesystem(t *testing.T) {
 	}
 	if detectRawFilesystem(write(func(b []byte) {})) {
 		t.Fatalf("a zero-filled file should not be a filesystem image")
+	}
+	// The MBR signature alone appears in plenty of boot sectors; without a
+	// usable partition entry it must not pass for a partitioned disk.
+	negative := map[string]string{
+		"signature only": write(func(b []byte) { b[510], b[511] = 0x55, 0xAA }),
+		"empty entries": write(func(b []byte) {
+			b[510], b[511] = 0x55, 0xAA
+			for i := 0; i < 4; i++ {
+				copy(b[446+i*16+4:], []byte{0x83}) // a type with no extent
+			}
+		}),
+		"absurd extent": write(func(b []byte) {
+			b[510], b[511] = 0x55, 0xAA
+			entry := b[446:462]
+			entry[4] = 0x83
+			le.PutUint32(entry[8:], 1)
+			le.PutUint32(entry[12:], 0xFFFFFFFF)
+		}),
+	}
+	for name, p := range negative {
+		if detectRawFilesystem(p) {
+			t.Fatalf("%s was taken for a partitioned disk image", name)
+		}
 	}
 }
 
@@ -225,12 +260,24 @@ func TestDiskExtractListAndCp(t *testing.T) {
 		t.Fatalf("unexpected symlink %q err=%v", target, err)
 	}
 
-	// Root listing shows the volume list (single volume, so one row).
+	// A bare path lists the volumes (single volume, so one row), while an
+	// explicit "/" is the filesystem root of that one volume.
+	volEntries, err := ListDisk(qcow2Path, "")
+	if err != nil {
+		t.Fatalf("list volumes: %v", err)
+	}
+	if len(volEntries) != 1 || volEntries[0].Name != "disk" {
+		t.Fatalf("unexpected volume listing: %+v", volEntries)
+	}
 	rootEntries, err := ListDisk(qcow2Path, "/")
 	if err != nil {
 		t.Fatalf("list root: %v", err)
 	}
-	if len(rootEntries) != 1 || rootEntries[0].Name != "disk" {
+	rootNames := map[string]bool{}
+	for _, e := range rootEntries {
+		rootNames[e.Name] = true
+	}
+	if !rootNames["etc"] || !rootNames["usr"] {
 		t.Fatalf("unexpected root listing: %+v", rootEntries)
 	}
 

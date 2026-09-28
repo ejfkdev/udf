@@ -41,6 +41,8 @@ func Detect(path string) (string, error) {
 		return detectCompressed(path, "zstd")
 	case hasPrefix(b, "\x04\x22\x4d\x18"): // lz4 frame
 		return detectCompressed(path, "lz4")
+	case hasPrefix(b, legacyLZ4Magic): // lz4 legacy frame (Android ramdisks)
+		return detectCompressed(path, "lz4")
 	case len(b) >= 262 && string(b[257:262]) == "ustar":
 		return "tar", nil
 	case hasPrefix(b, "PK\x03\x04") || hasPrefix(b, "PK\x05\x06") || hasPrefix(b, "PK\x07\x08"):

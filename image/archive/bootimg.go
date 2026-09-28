@@ -175,6 +175,8 @@ func bootCompression(b []byte) string {
 		return "zstd"
 	case len(b) >= 4 && string(b[:4]) == "\x04\x22\x4d\x18":
 		return "lz4"
+	case isLegacyLZ4(b):
+		return "lz4"
 	case len(b) >= 3 && string(b[:3]) == "\x5d\x00\x00":
 		return "lzma"
 	}

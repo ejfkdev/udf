@@ -42,3 +42,33 @@ func CRC16(crc uint16, bs []byte) uint16 {
 
 	return crc
 }
+
+// crc16ArcTab is the reflected CRC-16 table e2fsprogs uses for ext4's group
+// descriptor checksums (polynomial 0x8005, reflected). It is a different
+// algorithm from the CRC-16/CCITT above, which is what the kernel's crc16()
+// uses, so the two cannot be interchanged.
+var crc16ArcTab = func() [256]uint16 {
+	var tab [256]uint16
+	for i := range tab {
+		v := uint16(i)
+		for bit := 0; bit < 8; bit++ {
+			if v&1 != 0 {
+				v = (v >> 1) ^ 0xA001
+			} else {
+				v >>= 1
+			}
+		}
+		tab[i] = v
+	}
+	return tab
+}()
+
+// CRC16Arc is the CRC-16/ARC that ext4 group descriptor checksums are computed
+// with: crc16 with polynomial 0x8005, reflected, seeded with 0xffff and over
+// the UUID for the descriptor checksum.
+func CRC16Arc(crc uint16, bs []byte) uint16 {
+	for i := 0; i < len(bs); i++ {
+		crc = (crc >> 8) ^ crc16ArcTab[(crc^uint16(bs[i]))&0xff]
+	}
+	return crc
+}

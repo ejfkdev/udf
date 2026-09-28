@@ -41,6 +41,7 @@ import (
 	"github.com/ejfkdev/udf/parallels"
 	"github.com/ejfkdev/udf/qcow"
 	"github.com/ejfkdev/udf/qed"
+	"github.com/ejfkdev/udf/superlp"
 	"github.com/ejfkdev/udf/udffs"
 	"github.com/ejfkdev/udf/vdi"
 	"github.com/ejfkdev/udf/vma"
@@ -66,7 +67,7 @@ func IsDiskImage(path string) bool {
 // or an LVM logical volume.
 type DiskVolume struct {
 	Name   string `json:"name"`
-	Kind   string `json:"kind"` // "partition" | "lvm" | "disk"
+	Kind   string `json:"kind"` // "partition" | "lvm" | "disk" | "super"
 	Start  int64  `json:"start"`
 	Size   int64  `json:"size"`
 	FSType string `json:"fs_type,omitempty"` // "ext4" | "xfs"
@@ -645,13 +646,18 @@ func (r mountedFSReader) Stat(name string) (fs.FileInfo, error)      { return r.
 func (r mountedFSReader) Readlink(name string) (string, error)       { return r.v.Readlink(name) }
 func (r mountedFSReader) Close() error                               { return r.v.Unmount() }
 
-// region describes one candidate volume to probe for a filesystem.
+// region describes one candidate volume to probe for a filesystem. ra is set
+// when the volume is not a plain byte range of the disk (an Android super
+// partition's logical partitions are extents, not a range), in which case it
+// holds the mapped view and start is only the region's origin.
 type region struct {
-	name  string
-	kind  string
-	start int64
-	size  int64
-	probe bool
+	name        string
+	kind        string
+	start       int64
+	size        int64
+	probe       bool
+	ra          io.ReaderAt
+	volumeStart int64 // start recorded on the volume (defaults to start)
 }
 
 // discoverVolumes enumerates one disk's partitions and LVM logical volumes,
@@ -698,6 +704,7 @@ func discoverVolumes(be *diskBackend) ([]DiskVolume, int64, error) {
 			}
 
 			regions = append(regions, region{name: fmt.Sprintf("p%d", p.GetIndex()), kind: "partition", start: start, size: size, probe: true})
+			regions = append(regions, superRegions(be, start, fmt.Sprintf("p%d/", p.GetIndex()))...)
 
 			vg, lerr := lvm2.Open(be, start)
 			if lerr != nil {
@@ -713,8 +720,10 @@ func discoverVolumes(be *diskBackend) ([]DiskVolume, int64, error) {
 			}
 		}
 	} else {
-		// No partition table: the filesystem (if any) covers the whole disk.
+		// No partition table: the filesystem (if any) covers the whole disk,
+		// or the disk is a bare Android super image.
 		regions = append(regions, region{name: "disk", kind: "disk", start: 0, size: d.Size, probe: true})
+		regions = append(regions, superRegions(be, 0, "")...)
 	}
 
 	// A boot sector (NTFS/FAT/exFAT VBR) also ends with the 0x55AA bootstrap
@@ -729,8 +738,44 @@ func discoverVolumes(be *diskBackend) ([]DiskVolume, int64, error) {
 	vols := make([]DiskVolume, len(regions))
 	for i, r := range regions {
 		vols[i] = DiskVolume{Name: r.name, Kind: r.kind, Start: r.start, Size: r.size, FSType: fstypes[i]}
+		if r.ra != nil {
+			// The volume is not a byte range: it is read through a mapping
+			// rebuilt from its origin when it is opened.
+			vols[i].Start = r.volumeStart
+		}
 	}
 	return vols, blocksize, nil
+}
+
+// superRegions returns the logical partitions of an Android super partition at
+// origin, if that is what the bytes there are. Each becomes a volume of its own
+// (kind "super"), named after the partition — prefixed with the containing
+// partition when the super is one partition of a bigger disk, so names stay
+// unambiguous — and read through an extent mapping rather than a byte range.
+func superRegions(be io.ReaderAt, origin int64, prefix string) []region {
+	if !superlp.Detect(be, origin) {
+		return nil
+	}
+	meta, err := superlp.Open(be, origin)
+	if err != nil {
+		return nil
+	}
+	out := make([]region, 0, len(meta.Partitions))
+	for _, part := range meta.Partitions {
+		mapping, err := meta.Mapping(be, origin, part)
+		if err != nil {
+			continue
+		}
+		out = append(out, region{
+			name:        prefix + part.Name,
+			kind:        "super",
+			size:        part.Size(),
+			probe:       true,
+			ra:          mapping,
+			volumeStart: origin,
+		})
+	}
+	return out
 }
 
 // mbrExtendedStarts returns the absolute byte offsets of MBR extended
@@ -822,6 +867,10 @@ func probeFilesystemsParallel(be *diskBackend, regions []region, blocksize int64
 				if !regions[i].probe {
 					continue
 				}
+				if regions[i].ra != nil {
+					out[i] = detectFilesystem(regions[i].ra, 0, regions[i].size, blocksize)
+					continue
+				}
 				out[i] = detectFilesystem(be, regions[i].start, regions[i].size, blocksize)
 			}
 		}()
@@ -892,7 +941,7 @@ func (img *diskImage) metadata() *DiskMetadata {
 // boot-block/superblock magic, so enumerating all of a disk's regions stays
 // cheap. The filesystem is opened lazily in openVolumeReaderOn only when a
 // caller lists or reads a path inside it.
-func detectFilesystem(be *diskBackend, start, size, blocksize int64) string {
+func detectFilesystem(be io.ReaderAt, start, size, blocksize int64) string {
 	var b [512]byte
 	_, _ = be.ReadAt(b[:], start)
 
@@ -941,7 +990,7 @@ func detectFilesystem(be *diskBackend, start, size, blocksize int64) string {
 }
 
 // detectFATType distinguishes FAT12/16/32 from the BIOS parameter block at base.
-func detectFATType(be *diskBackend, base int64) string {
+func detectFATType(be io.ReaderAt, base int64) string {
 	var bpb [44]byte
 	if _, err := be.ReadAt(bpb[:], base); err != nil {
 		return "fat32"
@@ -1015,6 +1064,7 @@ type virtualTarget struct {
 // the segment does not match, keeping simple images one-liner friendly; several
 // candidates require an explicit prefix rather than a silent guess.
 func (img *diskImage) resolveVirtual(vp string) (*virtualTarget, error) {
+	explicitRoot := strings.TrimSpace(vp) == "/"
 	rel, err := fsview.NormalizePath(vp)
 	if err != nil {
 		return nil, err
@@ -1037,6 +1087,14 @@ func (img *diskImage) resolveVirtual(vp string) (*virtualTarget, error) {
 	}
 
 	if len(segs) == 0 {
+		// An explicit "/" names the filesystem root when there is exactly one
+		// volume to be at the root of; otherwise it is the listing of volumes
+		// (or disks) that a bare path gives.
+		if explicitRoot {
+			if vols := fsVolumes(img.vols[diskIdx]); len(vols) == 1 {
+				return &virtualTarget{level: "fs", diskIdx: diskIdx, vol: &vols[0]}, nil
+			}
+		}
 		if consumedDisk || len(img.disks) == 1 {
 			return &virtualTarget{level: "volumes", diskIdx: diskIdx}, nil
 		}
@@ -1049,6 +1107,9 @@ func (img *diskImage) resolveVirtual(vp string) (*virtualTarget, error) {
 	}
 	if len(fsVols) == 1 {
 		return &virtualTarget{level: "fs", diskIdx: diskIdx, vol: &fsVols[0], rel: strings.Join(segs, "/")}, nil
+	}
+	if len(fsVols) == 0 {
+		return nil, fmt.Errorf("this disk has no filesystem volumes%s", noFilesystemHint(img.disks[diskIdx].path))
 	}
 	return nil, fmt.Errorf("this disk has %d filesystem volumes; start the path with one of: %s", len(fsVols), formatVolumeChoices(fsVols))
 }
@@ -1199,7 +1260,12 @@ func ExtractDiskVolumes(path, outputDir string, bufferSize int) ([]string, error
 // openVolumeReader opens the filesystem reader for one discovered volume.
 func (img *diskImage) openVolumeReader(diskIdx int, vol *DiskVolume) (diskVolumeReader, func() error, error) {
 	if vol.FSType == "" {
-		return nil, nil, fmt.Errorf("volume %s has no supported filesystem", vol.Name)
+		// A qcow2 written as a delta over another image reads as the delta
+		// alone, which usually has no filesystem of its own: say so, since
+		// "no supported filesystem" would send someone looking for a bug in
+		// the filesystem reader. The Android emulator's userdata overlay is
+		// exactly this shape.
+		return nil, nil, fmt.Errorf("volume %s has no supported filesystem%s", vol.Name, noFilesystemHint(img.disks[diskIdx].path))
 	}
 	reader, err := openVolumeReaderOn(img.disks[diskIdx], *vol, img.blockSizes[diskIdx])
 	if err != nil {
@@ -1402,33 +1468,63 @@ func sanitizeVolumeName(name string) string {
 // openVolumeReaderOn opens the filesystem reader for a volume, keeping the
 // backend name distinct from the method wrapper.
 func openVolumeReaderOn(be *diskBackend, vol DiskVolume, blocksize int64) (diskVolumeReader, error) {
+	// An Android super partition's logical partitions are extent lists, so
+	// they are read through a mapping rebuilt from the volume's origin; every
+	// other volume is a plain range of the disk.
+	var ra io.ReaderAt = be
+	if vol.Kind == "super" {
+		name := vol.Name
+		if i := strings.LastIndexByte(name, '/'); i >= 0 {
+			name = name[i+1:]
+		}
+		meta, err := superlp.Open(be, vol.Start)
+		if err != nil {
+			return nil, fmt.Errorf("open super volume %s: %w", vol.Name, err)
+		}
+		part, ok := meta.Find(name)
+		if !ok {
+			return nil, fmt.Errorf("open super volume %s: no such logical partition", vol.Name)
+		}
+		mapping, err := meta.Mapping(be, vol.Start, part)
+		if err != nil {
+			return nil, fmt.Errorf("open super volume %s: %w", vol.Name, err)
+		}
+		ra = mapping
+		vol.Start = 0
+	}
+	// The diskfs-based readers want a backend rather than a bare reader, so a
+	// mapped volume keeps the backend's identity but reads through the mapping.
+	storage := backend.Storage(be)
+	if ra != be {
+		storage = mappedStorage{diskBackend: be, ra: ra}
+	}
 	switch vol.FSType {
 	case "ext4":
-		efs, err := ext4.Read(be, vol.Size, vol.Start, blocksize)
+		efs, err := ext4.Read(storage, vol.Size, vol.Start, blocksize)
 		if err != nil {
 			return nil, fmt.Errorf("open ext4 volume %s: %w", vol.Name, err)
 		}
 		return &ext4Reader{fs: efs}, nil
 	case "xfs":
-		xv, err := diskxfs.Open(be, vol.Start, vol.Size)
+		xv, err := diskxfs.Open(ra, vol.Start, vol.Size)
 		if err != nil {
 			return nil, fmt.Errorf("open xfs volume %s: %w", vol.Name, err)
 		}
 		return &xfsReader{v: xv}, nil
 	case "btrfs":
-		bv, err := diskbtrfs.Open(be, vol.Start, vol.Size)
+		bv, err := diskbtrfs.Open(ra, vol.Start, vol.Size)
 		if err != nil {
 			return nil, fmt.Errorf("open btrfs volume %s: %w", vol.Name, err)
 		}
 		return &btrfsReader{v: bv}, nil
 	case "ntfs":
-		nv, err := ntfs.Open(be, vol.Start, vol.Size)
+		nv, err := ntfs.Open(ra, vol.Start, vol.Size)
 		if err != nil {
 			return nil, fmt.Errorf("open ntfs volume %s: %w", vol.Name, err)
 		}
 		return mountedFSReader{v: nv}, nil
 	case "squashfs":
-		sfs, err := squashfs.Read(be, vol.Size, vol.Start, blocksize)
+		sfs, err := squashfs.Read(storage, vol.Size, vol.Start, blocksize)
 		if err != nil {
 			return nil, fmt.Errorf("open squashfs volume %s: %w", vol.Name, err)
 		}
@@ -1458,19 +1554,19 @@ func openVolumeReaderOn(be *diskBackend, vol DiskVolume, blocksize int64) (diskV
 			return "", fmt.Errorf("%s is not a symlink", name)
 		}}, nil
 	case "udf":
-		f, err := udffs.Open(be, vol.Start)
+		f, err := udffs.Open(ra, vol.Start)
 		if err != nil {
 			return nil, fmt.Errorf("open udf volume %s: %w", vol.Name, err)
 		}
 		return f, nil
 	case "erofs":
-		f, err := erofs.Open(be, vol.Start)
+		f, err := erofs.Open(ra, vol.Start)
 		if err != nil {
 			return nil, fmt.Errorf("open erofs volume %s: %w", vol.Name, err)
 		}
 		return f, nil
 	case "exfat":
-		rs := io.NewSectionReader(be, vol.Start, vol.Size)
+		rs := io.NewSectionReader(ra, vol.Start, vol.Size)
 		f, err := openExFATFS(rs)
 		if err != nil {
 			return nil, fmt.Errorf("open exfat volume %s: %w", vol.Name, err)
@@ -1483,6 +1579,9 @@ func openVolumeReaderOn(be *diskBackend, vol DiskVolume, blocksize int64) (diskV
 		}
 		return f, nil
 	case "fat12", "fat16", "fat32":
+		if vol.Kind == "super" {
+			return nil, fmt.Errorf("volume %s: FAT inside a super partition is not supported", vol.Name)
+		}
 		fs, err := openFAT(be, vol, blocksize)
 		if err != nil {
 			return nil, err
@@ -1492,6 +1591,53 @@ func openVolumeReaderOn(be *diskBackend, vol DiskVolume, blocksize int64) (diskV
 		return nil, fmt.Errorf("volume %s has unsupported filesystem", vol.Name)
 	}
 }
+
+// noFilesystemHint explains an image whose volumes hold no filesystem: a qcow2
+// delta over a backing file is the common case (an Android emulator's userdata
+// overlay), and without this the failure reads like a bug in the reader.
+func noFilesystemHint(path string) string {
+	if backing := qcow2BackingFile(path); backing != "" {
+		return fmt.Sprintf(": this qcow2 is a delta whose backing file is %q, and only the backing file holds the filesystem", backing)
+	}
+	return ""
+}
+
+// qcow2BackingFile returns the backing file name recorded in a qcow2 header, or
+// "" when there is none (or the file is not a qcow2).
+func qcow2BackingFile(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	var hdr [20]byte
+	if _, err := f.ReadAt(hdr[:], 0); err != nil {
+		return ""
+	}
+	if string(hdr[:4]) != magicQCow {
+		return ""
+	}
+	offset := int64(binary.BigEndian.Uint64(hdr[8:16]))
+	size := int64(binary.BigEndian.Uint32(hdr[16:20]))
+	if offset <= 0 || size <= 0 || size > 4096 {
+		return ""
+	}
+	name := make([]byte, size)
+	if _, err := f.ReadAt(name, offset); err != nil {
+		return ""
+	}
+	return strings.TrimRight(string(name), "\x00")
+}
+
+// mappedStorage serves the diskfs readers from an extent mapping instead of the
+// raw device, keeping the backend's other methods (which stay a no-op for a
+// read-only image).
+type mappedStorage struct {
+	*diskBackend
+	ra io.ReaderAt
+}
+
+func (m mappedStorage) ReadAt(p []byte, off int64) (int, error) { return m.ra.ReadAt(p, off) }
 
 func openFAT(be *diskBackend, vol DiskVolume, blocksize int64) (filesystem.FileSystem, error) {
 	switch vol.FSType {

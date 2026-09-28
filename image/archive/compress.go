@@ -1,6 +1,7 @@
 package archive
 
 import (
+	"bytes"
 	"compress/bzip2"
 	"compress/zlib"
 	"fmt"
@@ -53,7 +54,25 @@ func openCompressed(r io.Reader, compression string) (io.Reader, func(), error) 
 		}
 		return zr, func() { zr.Close() }, nil
 	case "lz4":
-		return lz4.NewReader(r), func() {}, nil
+		// Android's ramdisks use LZ4's legacy frame format, which the modern
+		// frame decoder does not read; tell them apart by their magic.
+		var magic [4]byte
+		if _, err := io.ReadFull(r, magic[:]); err != nil {
+			if err == io.EOF {
+				return r, func() {}, nil
+			}
+			return nil, nil, err
+		}
+		if string(magic[:]) == legacyLZ4Magic {
+			// The legacy format is blocks only: the magic has been read, and
+			// what follows are length-prefixed blocks.
+			stream, err := openLegacyLZ4(r)
+			if err != nil {
+				return nil, nil, err
+			}
+			return stream, func() {}, nil
+		}
+		return lz4.NewReader(io.MultiReader(bytes.NewReader(magic[:]), r)), func() {}, nil
 	}
 	return nil, nil, fmt.Errorf("unsupported compression: %s", compression)
 }

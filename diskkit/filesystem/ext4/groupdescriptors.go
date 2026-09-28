@@ -86,7 +86,7 @@ func (gds *groupDescriptors) equal(a *groupDescriptors) bool {
 }
 
 // groupDescriptorsFromBytes create a groupDescriptors struct from bytes
-func groupDescriptorsFromBytes(b []byte, gdSize uint16, hashSeed uint32, checksumType gdtChecksumType) (*groupDescriptors, error) {
+func groupDescriptorsFromBytes(b []byte, gdSize uint16, hashSeed uint32, seed16 uint16, checksumType gdtChecksumType) (*groupDescriptors, error) {
 	if gdSize == 0 {
 		return nil, fmt.Errorf("group descriptor size cannot be zero")
 	}
@@ -99,7 +99,7 @@ func groupDescriptorsFromBytes(b []byte, gdSize uint16, hashSeed uint32, checksu
 	for i := 0; i < count; i++ {
 		start := i * int(gdSize)
 		end := start + int(gdSize)
-		gd, err := groupDescriptorFromBytes(b[start:end], gdSize, i, checksumType, hashSeed)
+		gd, err := groupDescriptorFromBytes(b[start:end], gdSize, i, checksumType, hashSeed, seed16)
 		if err != nil || gd == nil {
 			return nil, fmt.Errorf("error creating group descriptor from bytes: %w", err)
 		}
@@ -111,10 +111,10 @@ func groupDescriptorsFromBytes(b []byte, gdSize uint16, hashSeed uint32, checksu
 }
 
 // toBytes returns groupDescriptors ready to be written to disk
-func (gds *groupDescriptors) toBytes(checksumType gdtChecksumType, hashSeed uint32) []byte {
+func (gds *groupDescriptors) toBytes(checksumType gdtChecksumType, hashSeed uint32, seed16 uint16) []byte {
 	b := make([]byte, 0, 10*groupDescriptorSize)
 	for _, gd := range gds.descriptors {
-		b2 := gd.toBytes(checksumType, hashSeed)
+		b2 := gd.toBytes(checksumType, hashSeed, seed16)
 		b = append(b, b2...)
 	}
 
@@ -137,7 +137,7 @@ func (gds *groupDescriptors) byFreeBlocks() []groupDescriptor {
 }
 
 // groupDescriptorFromBytes create a groupDescriptor struct from bytes
-func groupDescriptorFromBytes(b []byte, gdSize uint16, number int, checksumType gdtChecksumType, hashSeed uint32) (*groupDescriptor, error) {
+func groupDescriptorFromBytes(b []byte, gdSize uint16, number int, checksumType gdtChecksumType, hashSeed uint32, seed16 uint16) (*groupDescriptor, error) {
 	// block count, reserved block count and free blocks depends on whether the fs is 64-bit or not
 	blockBitmapLocation := make([]byte, 8)
 	inodeBitmapLocation := make([]byte, 8)
@@ -197,7 +197,7 @@ func groupDescriptorFromBytes(b []byte, gdSize uint16, number int, checksumType 
 	// only bother with checking the checksum if it was not type none (pre-checksums)
 	if checksumType != gdtChecksumNone {
 		checksum := binary.LittleEndian.Uint16(b[0x1e:0x20])
-		actualChecksum := groupDescriptorChecksum(checksumInput, hashSeed, gdNumber, checksumType)
+		actualChecksum := groupDescriptorChecksum(checksumInput, hashSeed, seed16, gdNumber, checksumType)
 		if checksum != actualChecksum {
 			return nil, fmt.Errorf("checksum mismatch, passed %x, actual %x", checksum, actualChecksum)
 		}
@@ -207,7 +207,7 @@ func groupDescriptorFromBytes(b []byte, gdSize uint16, number int, checksumType 
 }
 
 // toBytes returns a groupDescriptor ready to be written to disk
-func (gd *groupDescriptor) toBytes(checksumType gdtChecksumType, hashSeed uint32) []byte {
+func (gd *groupDescriptor) toBytes(checksumType gdtChecksumType, hashSeed uint32, seed16 uint16) []byte {
 	gdSize := gd.size
 
 	b := make([]byte, gdSize)
@@ -261,7 +261,7 @@ func (gd *groupDescriptor) toBytes(checksumType gdtChecksumType, hashSeed uint32
 		copy(b[0x3a:0x3c], inodeBitmapChecksum[2:4])
 	}
 
-	checksum := groupDescriptorChecksum(b[0x0:0x40], hashSeed, gd.number, checksumType)
+	checksum := groupDescriptorChecksum(b[0x0:0x40], hashSeed, seed16, gd.number, checksumType)
 	binary.LittleEndian.PutUint16(b[0x1e:0x20], checksum)
 
 	return b
@@ -303,31 +303,33 @@ func (f *blockGroupFlags) toInt() uint16 {
 //	we do know that the maximum number of block groups in 32-bit mode is 2^19, which must be uint32
 //	and in 64-bit mode it is 2^51 which must be uint64
 //	So we start with uint32 = [4]byte{} for regular mode and [8]byte{} for mod32
-func groupDescriptorChecksum(b []byte, hashSeed uint32, groupNumber uint16, checksumType gdtChecksumType) uint16 {
+//
+// groupDescriptorChecksum computes the checksum a group descriptor carries.
+// Both variants append the group number to an initial seed and then hash the
+// descriptor up to—but not including—the checksum field itself; the metadata
+// variant uses CRC-32C seeded from the superblock's checksum seed, the older
+// gdt_csum variant uses CRC-16/ARC seeded from the UUID.
+func groupDescriptorChecksum(b []byte, hashSeed uint32, seed16 uint16, groupNumber uint16, checksumType gdtChecksumType) uint16 {
 	var checksum uint16
 
+	// bg_checksum sits at 0x1e for both the 32- and 64-byte descriptor forms.
+	body := b
+	if len(body) > 0x1e {
+		body = body[:0x1e]
+	}
+
 	numBytes := make([]byte, 4)
-	binary.LittleEndian.PutUint16(numBytes, groupNumber)
+	binary.LittleEndian.PutUint32(numBytes, uint32(groupNumber))
 	switch checksumType {
 	case gdtChecksumNone:
 		checksum = 0
 	case gdtChecksumMetadata:
-		// metadata checksum applies groupNumber to seed, then zeroes out checksum bytes from entire descriptor, then applies descriptor bytes
 		crcResult := crc.CRC32c(hashSeed, numBytes)
-		b2 := make([]byte, len(b))
-		copy(b2, b)
-		b2[0x1e] = 0
-		b2[0x1f] = 0
-		crcResult = crc.CRC32c(crcResult, b2)
+		crcResult = crc.CRC32c(crcResult, body)
 		checksum = uint16(crcResult & 0xffff)
 	case gdtChecksumGdt:
-		hashSeed16 := uint16(hashSeed & 0xffff)
-		crcResult := crc.CRC16(hashSeed16, numBytes)
-		b2 := make([]byte, len(b))
-		copy(b2, b)
-		b2[0x1e] = 0
-		b2[0x1f] = 0
-		checksum = crc.CRC16(crcResult, b)
+		crcResult := crc.CRC16Arc(seed16, numBytes)
+		checksum = crc.CRC16Arc(crcResult, body)
 	}
 	return checksum
 }

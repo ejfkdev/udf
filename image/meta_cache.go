@@ -43,7 +43,7 @@ func cacheKeyFor(path string, args ...string) string {
 
 // cacheFormat invalidates every cached entry when the shape of a cached value
 // changes: a stale entry would otherwise be read back without its new fields.
-const cacheFormat = "udf-cache-2"
+const cacheFormat = "udf-cache-3"
 
 // cacheDir returns the directory holding small derived data (file listings,
 // image metadata, archive indexes). It is the per-user directory under the

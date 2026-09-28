@@ -9,6 +9,7 @@ import (
 
 	"github.com/ejfkdev/udf/erofs"
 	arch "github.com/ejfkdev/udf/image/archive"
+	"github.com/ejfkdev/udf/superlp"
 	"github.com/ejfkdev/udf/udffs"
 )
 
@@ -173,6 +174,28 @@ func detectRawFilesystem(path string) bool {
 		}
 	}
 
+	// A partitioned raw disk is a whole disk, not a filesystem: a GPT header
+	// at LBA 1, or an MBR with at least one populated partition entry. A GPT
+	// disk's protective MBR carries no filesystem magic, so without this probe
+	// an Android system.img (a GPT disk like the emulator's) would not be
+	// recognized at all.
+	var lba1 [8]byte
+	if _, err := f.ReadAt(lba1[:], 512); err == nil && string(lba1[:]) == "EFI PART" {
+		return true
+	}
+	if hasMBRPartitions(fb[:]) {
+		return true
+	}
+
+	// An Android super image (dynamic partitions) is a whole device too: the
+	// LP metadata geometry sits at 4 KiB, with no filesystem magic in front of
+	// it. A super partition *inside* a disk is found by the disk reader.
+	var geom [4]byte
+	if _, err := f.ReadAt(geom[:], superlp.GeometryOffset); err == nil &&
+		binary.LittleEndian.Uint32(geom[:]) == superlp.GeometryMagic {
+		return true
+	}
+
 	// ext2/3/4: superblock magic 0xEF53 at offset 1080.
 	var e [2]byte
 	if _, err := f.ReadAt(e[:], 1080); err == nil && binary.LittleEndian.Uint16(e[:]) == 0xEF53 {
@@ -193,6 +216,32 @@ func detectRawFilesystem(path string) bool {
 
 	// UDF and EROFS have their own dedicated header probes.
 	if erofs.Detect(f, 0) || udffs.Detect(f, 0) {
+		return true
+	}
+	return false
+}
+
+// hasMBRPartitions reports whether a 512-byte boot block looks like an MBR
+// partition table with something in it: the 0x55AA signature plus at least one
+// entry that names a type and holds a non-empty, in-range extent. The
+// signature alone appears in far too much data to be worth anything.
+func hasMBRPartitions(b []byte) bool {
+	if len(b) < 512 || b[510] != 0x55 || b[511] != 0xAA {
+		return false
+	}
+	for i := 0; i < 4; i++ {
+		e := b[446+i*16 : 446+(i+1)*16]
+		kind := e[4]
+		start := binary.LittleEndian.Uint32(e[8:12])
+		sectors := binary.LittleEndian.Uint32(e[12:16])
+		if kind == 0 || sectors == 0 {
+			continue
+		}
+		// A plausible entry starts within the disk and does not claim more
+		// sectors than any disk could hold.
+		if start == 0 || sectors > 1<<32/512 || uint64(start)+uint64(sectors) > 1<<32 {
+			continue
+		}
 		return true
 	}
 	return false

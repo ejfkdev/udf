@@ -207,6 +207,7 @@ type superblock struct {
 	lostFoundInode               uint32
 	projectQuotaInode            uint32
 	checksumSeed                 uint32
+	gdtChecksumSeed              uint16 // CRC-16/ARC seed for group descriptor checksums (gdt_csum)
 	// encoding
 	filenameCharsetEncoding      uint16
 	filenameCharsetEncodingFlags uint16
@@ -439,6 +440,10 @@ func superblockFromBytes(b []byte) (*superblock, error) {
 	if sb.features.metadataChecksums && sb.checksumSeed == 0 {
 		sb.checksumSeed = crc.CRC32c(0xffffffff, sb.uuid[:])
 	}
+	// The older gdt_csum group descriptor checksum is CRC-16/ARC seeded from
+	// the filesystem UUID, which is what e2fsprogs hashes before the group
+	// number; it does not use s_checksum_seed at all.
+	sb.gdtChecksumSeed = crc.CRC16Arc(0xffff, sb.uuid[:])
 
 	sb.filenameCharsetEncoding = binary.LittleEndian.Uint16(b[0x27c:0x27e])
 	sb.filenameCharsetEncodingFlags = binary.LittleEndian.Uint16(b[0x27e:0x280])

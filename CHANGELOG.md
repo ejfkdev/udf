@@ -32,6 +32,11 @@ keep the newest version at the top.
   otherwise, which decompilers still accept. The module archive py2exe appends
   to a one-file exe is listed under `bundle/`, and detection prefers this format
   over the generic zip-SFX reading so nothing is lost.
+- LZ4's legacy frame format (magic `0x184C2102`) is decompressed, so the
+  Android emulator's `ramdisk.img`/`initrd` — and ramdisks inside many devices'
+  `boot.img`, which are compressed the same way — list and extract their cpio
+  contents. The emulator appends a bootconfig blob after the stream, which the
+  decoder stops at cleanly instead of failing.
 - `resources.arsc` inside an APK (or any zip) is decoded: the compiled resource
   table lists as `0x7f010000 string/app_name [default] "Magisk"`-style lines
   with the package map, resource names, configurations (language/region,
@@ -41,8 +46,37 @@ keep the newest version at the top.
   (styles) shown with their parent and each item's value. The string-pool
   reader is now shared with the AXML decoder instead of duplicated.
 
+- Android `super` partitions — the dynamic partitions of every modern device
+  and of the emulator's `system.img` — open as volumes of their own. The LP
+  metadata is parsed (geometry, both metadata slots, the extent and partition
+  tables) and each logical partition is read through an extent mapping, so
+  `system`, `product`, `vendor`, `system_ext` and `system_dlkm` list and extract
+  even when their extents are fragmented or partly unallocated. A super inside a
+  disk is found by the disk reader (`p2/system`), a standalone `super.img` by
+  the detector (`system`).
+- Raw GPT/MBR disks are recognized as disk images. A GPT disk puts no
+  filesystem magic at offset 0 — its protective MBR does not either — so an
+  Android `system.img`, `vendor.img` or `encryptionkey.img` used to be reported
+  as an unsupported archive. The GPT header at LBA 1, or an MBR with a usable
+  partition entry, now identifies them.
+
+- On a disk with a single filesystem, an explicit `/` lists that filesystem's
+  root (a bare path still lists the volumes, so nothing else changes).
+- A qcow2 that is a delta over a backing file now says so when its volumes hold
+  no filesystem ("this qcow2 is a delta whose backing file is
+  \"userdata-qemu.img\""), instead of a bare "no supported filesystem" that
+  reads like a reader bug. The Android emulator's userdata overlay is this
+  shape, and the backing file it names is the one to read.
+
 ### Fixed
 
+- ext4 group descriptor checksums are computed the way e2fsprogs does: CRC-16
+  (the ARC variant — the code had the CCITT one), seeded from the filesystem
+  UUID, over the descriptor's bytes up to the checksum field. The previous
+  computation also hashed the whole descriptor with the checksum zeroed, so any
+  ext4 written by a modern `mkfs` (Android images included, whose `gdt_csum` is
+  set) failed to open with "checksum mismatch". The metadata-csum variant, used
+  by newer filesystems, is corrected the same way.
 - AXML colors: the four value types are RGB8, ARGB8, RGB4 and ARGB4 — the 4-bit
   forms now expand each nibble to a full byte (and the wider forms keep their
   channel order), so decoded color values are right instead of plausible.

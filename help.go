@@ -54,11 +54,12 @@ var helpTextsByLang = map[langx.Language]helpTexts{
             cpio(cpio.gz/xz/zst，含 initramfs) / asar / rpm / deb(ipk) / cab（含 .msi 内嵌）/ nar(nix) / xar(.pkg) / .ppkg，以及 OCI 布局 / OCI 归档(.oci.tar，含 flatpak) / docker save
   可执行封装: pyinstaller(onefile，含 PYZ，重建 .pyc) / py2exe(PYTHONSCRIPT 解码为 .pyc，附加模块 zip 列出) /
             nuitka onefile(附加与内嵌载荷) / .NET single-file(bundle v1/v2/v6，含 deflate) / zip 自解压 exe
-  安卓:     boot.img(v0-v4：内核/ramdisk/dtb 及 ramdisk 内 cpio 文件) / sparse 稀疏 img(磁盘容器) /
+  安卓:     boot.img(v0-v4：内核/ramdisk/dtb 及 ramdisk 内 cpio 文件，含 legacy LZ4 压缩的 ramdisk) /
+            sparse 稀疏 img(磁盘容器) / super 动态分区(按 extent 映射读取，独立或 GPT 内均可) /
             resources.arsc(资源表解码，名称与引用可读)；APK 内二进制 AXML 自动解码为文本 XML
   游戏资源: Unity AssetBundle(UnityFS：按节点解压 none/LZ4/LZMA；LZHAM 与加密会明确报不支持)
   虚拟磁盘: qcow2 / qcow1 / vmdk / vhd(vhdx) / vdi / qed / parallels / vma / ova(ovf) / sif / ffu /
-            wim(esd/swm) / raw(img) / ami / appimage / 安卓 sparse img
+            wim(esd/swm) / raw(img，含 GPT/MBR 分区磁盘) / ami / appimage / 安卓 sparse img 与 super 动态分区
   文件系统: ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs(未压缩) / fat12/16/32，含 LVM2 逻辑卷`,
 		options: `内置选项:
   -h, --help         显示帮助（总览或当前子命令）
@@ -103,11 +104,12 @@ var helpTextsByLang = map[langx.Language]helpTexts{
   exe bundles:   pyinstaller (onefile, incl. PYZ, rebuilds .pyc) / py2exe (PYTHONSCRIPT decoded to .pyc,
                  appended module archive listed) / nuitka onefile (appended and embedded payloads) /
                  .NET single-file (bundle v1/v2/v6, incl. deflate) / zip self-extracting exes
-  android:       boot.img (v0-v4: kernel/ramdisk/dtb and the ramdisk's own cpio files) / sparse img (disk container) /
-                 resources.arsc (resource table decoded, names and references readable)
+  android:       boot.img (v0-v4: kernel/ramdisk/dtb and the ramdisk's own cpio files, incl. LZ4-legacy ramdisks) /
+                 sparse img (disk container) / super partitions (dynamic partitions read through their extent mappings,
+                 standalone or inside a GPT disk) / resources.arsc (resource table decoded, names and references readable)
   game assets:   Unity AssetBundles (UnityFS: per-node decompression, none/LZ4/LZMA; LZHAM and encryption are reported unsupported)
   disk images:   qcow2 / qcow1 / vmdk / vhd (vhdx) / vdi / qed / parallels / vma / ova (ovf) / sif / ffu /
-                 wim (esd/swm) / raw (img) / ami / appimage / Android sparse img
+                 wim (esd/swm) / raw (img, incl. GPT/MBR-partitioned disks) / ami / appimage / Android sparse img and super partitions
   filesystems:   ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs (uncompressed) / fat12/16/32,
                  incl. LVM2 logical volumes`,
 		options: `Built-in options:

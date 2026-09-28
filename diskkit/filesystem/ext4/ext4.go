@@ -688,6 +688,7 @@ func Create(b backend.Storage, size, start, sectorsize int64, p *Params) (*FileS
 		lostFoundInode:               lostFoundInode,
 		overheadBlocks:               0,
 		checksumSeed:                 crc.CRC32c(0xffffffff, fsuuid[:]),
+		gdtChecksumSeed:              crc.CRC16Arc(0xffff, fsuuid[:]),
 		snapshotInodeNumber:          0,
 		snapshotID:                   0,
 		snapshotReservedBlocks:       0,
@@ -721,7 +722,7 @@ func Create(b backend.Storage, size, start, sectorsize int64, p *Params) (*FileS
 	reservedInodes := firstNonReservedInode - 1 // inodes 1-10
 	bg0.freeInodes -= reservedInodes
 
-	gdtByteCount := calculateGDTBytes(gdt, len(backupSuperblocks), sb.gdtChecksumType(), sb.checksumSeed)
+	gdtByteCount := calculateGDTBytes(gdt, len(backupSuperblocks), sb.gdtChecksumType(), sb.checksumSeed, sb.gdtChecksumSeed)
 	// gdtByteCount is in bytes; convert to blocks for freeBlocks accounting
 	gdtBlocks := (gdtByteCount + uint64(sb.blockSize) - 1) / uint64(sb.blockSize)
 	if sb.freeBlocks >= gdtBlocks {
@@ -869,7 +870,7 @@ func Read(b backend.Storage, size, start, sectorsize int64) (*FileSystem, error)
 	if uint64(n) < gdtSize {
 		return nil, fmt.Errorf("only could read %d Group Descriptor Table bytes from file instead of %d", n, gdtSize)
 	}
-	gdt, err := groupDescriptorsFromBytes(gdtBytes, sb.groupDescriptorSize, sb.checksumSeed, sb.gdtChecksumType())
+	gdt, err := groupDescriptorsFromBytes(gdtBytes, sb.groupDescriptorSize, sb.checksumSeed, sb.gdtChecksumSeed, sb.gdtChecksumType())
 	if err != nil {
 		return nil, fmt.Errorf("could not interpret Group Descriptor Table data: %v", err)
 	}
@@ -2746,7 +2747,7 @@ func (fs *FileSystem) writeGDT() error {
 	// now calculate how many there should be in total
 	gdtSize := uint64(gdSize) * fs.superblock.blockGroupCount()
 	gdt := fs.groupDescriptors
-	g := gdt.toBytes(fs.superblock.gdtChecksumType(), fs.superblock.checksumSeed)
+	g := gdt.toBytes(fs.superblock.gdtChecksumType(), fs.superblock.checksumSeed, fs.superblock.gdtChecksumSeed)
 
 	for _, bg := range fs.backupSuperblocks {
 		block := bg // backupSuperblocks already contains block numbers, not block group numbers
@@ -3306,8 +3307,8 @@ func (fs *FileSystem) initResizeInode() error {
 	return fs.writeInode(&in)
 }
 
-func calculateGDTBytes(gdt groupDescriptors, superblockCount int, checksumType gdtChecksumType, hashSeed uint32) uint64 {
-	singleTable := gdt.toBytes(checksumType, hashSeed)
+func calculateGDTBytes(gdt groupDescriptors, superblockCount int, checksumType gdtChecksumType, hashSeed uint32, seed16 uint16) uint64 {
+	singleTable := gdt.toBytes(checksumType, hashSeed, seed16)
 	return uint64(len(singleTable)) * uint64(superblockCount)
 }
 
