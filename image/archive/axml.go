@@ -6,7 +6,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode/utf16"
 )
 
 // Binary Android XML (AXML) decoder: turns the compiled form of
@@ -54,16 +53,17 @@ func isAXML(data []byte) bool {
 		binary.LittleEndian.Uint16(data[2:4]) == 8
 }
 
-// axmlPool is a decoded string pool.
+// axmlPool is a decoded string pool: the shared resource string pool plus the
+// binary-XML convention that a 0xFFFFFFFF index means "absent".
 type axmlPool struct {
-	strings []string
+	resStringPool
 }
 
 func (p *axmlPool) get(idx uint32) string {
-	if idx == axmlUndefinedStr || p == nil || int(idx) >= len(p.strings) {
+	if idx == axmlUndefinedStr {
 		return ""
 	}
-	return p.strings[idx]
+	return p.resStringPool.get(idx)
 }
 
 // axmlDecoder walks the chunk stream and writes text XML.
@@ -318,16 +318,22 @@ func axmlFraction(data uint32) string {
 	return strconv.FormatFloat(axmlComplexToFloat(data)*100, 'f', -1, 64) + suffix
 }
 
+// axmlColor renders a color value. The type codes are AOSP's: 0x1c RGB8,
+// 0x1d ARGB8, 0x1e RGB4, 0x1f ARGB4 — the four-bit forms expand to eight bits
+// per channel, as `aapt dump` and the platform do.
 func axmlColor(dt byte, data uint32) string {
+	nibble := func(v uint32) uint32 { return v&0xf | (v&0xf)<<4 }
 	switch dt {
-	case 0x1c: // ARGB8
-		return fmt.Sprintf("#%08x", data)
-	case 0x1d: // RGB8
+	case 0x1c: // RGB8
 		return fmt.Sprintf("#%06x", data&0xffffff)
-	case 0x1e: // ARGB4
-		return fmt.Sprintf("#%04x", data&0xffff)
-	case 0x1f: // RGB4
-		return fmt.Sprintf("#%03x", data&0xfff)
+	case 0x1d: // ARGB8
+		return fmt.Sprintf("#%08x", data)
+	case 0x1e: // RGB4
+		r, g, b := nibble(data>>8), nibble(data>>4), nibble(data)
+		return fmt.Sprintf("#%02x%02x%02x", r, g, b)
+	case 0x1f: // ARGB4
+		a, r, g, b := nibble(data>>12), nibble(data>>8), nibble(data>>4), nibble(data)
+		return fmt.Sprintf("#%02x%02x%02x%02x", a, r, g, b)
 	}
 	return fmt.Sprintf("#%08x", data)
 }
@@ -351,98 +357,12 @@ func xmlEscape(s string) string {
 	return b.String()
 }
 
-// parseStringPool decodes the string-pool chunk. chunkStart is the offset of
-// the ResChunk_header; body points past the 28-byte pool header, directly at
-// the string offset array.
+// parseStringPool decodes the string-pool chunk through the shared resource
+// string pool parser (the resource table uses the same chunk layout).
 func (d *axmlDecoder) parseStringPool(chunkStart, body, end int) (*axmlPool, error) {
-	headerSize := body - chunkStart
-	if headerSize < 28 {
-		return nil, fmt.Errorf("string pool header too small: %d", headerSize)
+	pool, err := parseResStringPool(d.data, chunkStart, body, end)
+	if err != nil {
+		return nil, err
 	}
-	stringCount := int(d.u32(chunkStart + 8))
-	flags := d.u32(chunkStart + 16)
-	stringsStart := int(d.u32(chunkStart + 20))
-	utf8 := flags&(1<<8) != 0
-
-	if stringCount < 0 || stringCount > 1<<20 {
-		return nil, fmt.Errorf("implausible string count %d", stringCount)
-	}
-	offsetsBase := chunkStart + headerSize
-	if offsetsBase+stringCount*4 > end {
-		return nil, fmt.Errorf("string pool offsets out of range")
-	}
-	dataBase := chunkStart + stringsStart
-	if dataBase < offsetsBase || dataBase > end {
-		return nil, fmt.Errorf("string pool data start out of range")
-	}
-
-	pool := &axmlPool{strings: make([]string, stringCount)}
-	for i := 0; i < stringCount; i++ {
-		off := int(d.u32(offsetsBase + i*4))
-		p := dataBase + off
-		if off < 0 || p < dataBase || p >= end {
-			continue
-		}
-		// A malformed string must not kill the whole decode; lenient
-		// decoders leave it empty.
-		if s, err := d.decodePoolString(p, end, utf8); err == nil {
-			pool.strings[i] = s
-		}
-	}
-	return pool, nil
-}
-
-func (d *axmlDecoder) decodePoolString(p, end int, utf8 bool) (string, error) {
-	if utf8 {
-		// One or two bytes of character count, then one or two bytes of
-		// byte length, then the UTF-8 data and a NUL.
-		if p+2 > end {
-			return "", fmt.Errorf("truncated utf8 string")
-		}
-		q := p
-		n := int(d.data[q])
-		q++
-		if n&0x80 != 0 {
-			if q >= end {
-				return "", fmt.Errorf("truncated utf8 string length")
-			}
-			n = (n&0x7f)<<8 | int(d.data[q])
-			q++
-		}
-		_ = n // character count; the byte length follows
-		blen := int(d.data[q])
-		q++
-		if blen&0x80 != 0 {
-			if q >= end {
-				return "", fmt.Errorf("truncated utf8 string byte length")
-			}
-			blen = (blen&0x7f)<<8 | int(d.data[q])
-			q++
-		}
-		if blen < 0 || q+blen > end {
-			return "", fmt.Errorf("utf8 string data out of range")
-		}
-		return string(d.data[q : q+blen]), nil
-	}
-	if p+2 > end {
-		return "", fmt.Errorf("truncated utf16 string")
-	}
-	q := p
-	n := int(d.u16(q))
-	q += 2
-	if n&0x8000 != 0 {
-		if q+2 > end {
-			return "", fmt.Errorf("truncated utf16 string length")
-		}
-		n = (n&0x7fff)<<16 | int(d.u16(q))
-		q += 2
-	}
-	if n < 0 || q+n*2 > end {
-		return "", fmt.Errorf("utf16 string data out of range")
-	}
-	units := make([]uint16, n)
-	for i := 0; i < n; i++ {
-		units[i] = d.u16(q + i*2)
-	}
-	return string(utf16.Decode(units)), nil
+	return &axmlPool{resStringPool: *pool}, nil
 }

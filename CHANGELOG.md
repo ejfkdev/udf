@@ -4,6 +4,49 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.7.4] - 2026-09-28
+
+### Added
+
+- Android `boot.img` (header v0–v4) opens as an archive: the kernel, ramdisk,
+  second stage, recovery DTBO and dtb are listed as components, and the ramdisk
+  is unpacked in turn — gzip/bzip2/xz/zstd/lz4/lzma are recognized — so the
+  files inside it (`ramdisk/init`, `ramdisk/default.prop`, …) list and extract
+  like any other archive member. The `ANDROID!` magic is weak, so the header is
+  validated before the format is claimed and a file that merely starts with
+  those bytes is still reported as unknown.
+- Android sparse images (magic `0xed26ff3a`) are read as a disk container:
+  the raw, fill and don't-care chunks are expanded on demand, so a sparse
+  `system.img` is listed, searched and extracted exactly like a raw image, with
+  only the chunks a read actually touches.
+- Unity AssetBundles (`UnityFS`) open as archives: the big-endian container
+  header and block/node tables are parsed and each node is decompressed from
+  just the blocks it overlaps, with stored, LZ4, LZ4HC and LZMA supported.
+  LZHAM-compressed and encrypted bundles are refused with a message that says
+  so rather than a truncated listing.
+- py2exe executables open as archives. udf walks the PE resource directory
+  (types, names, languages; RVAs mapped through the section table), lists every
+  resource as `resource/<type>/<name>`, and decodes the bootstrap script in the
+  `PYTHONSCRIPT` resource into a `.pyc` — the header carries the real CPython
+  magic when the exe says which `pythonXY.dll` it uses and is left zeroed
+  otherwise, which decompilers still accept. The module archive py2exe appends
+  to a one-file exe is listed under `bundle/`, and detection prefers this format
+  over the generic zip-SFX reading so nothing is lost.
+- `resources.arsc` inside an APK (or any zip) is decoded: the compiled resource
+  table lists as `0x7f010000 string/app_name [default] "Magisk"`-style lines
+  with the package map, resource names, configurations (language/region,
+  density, SDK, night mode, …) and values — strings, colors, dimensions,
+  booleans, integers — read back into text, references such as
+  `@drawable/ic_logo` resolved against the table's own id map, and bag entries
+  (styles) shown with their parent and each item's value. The string-pool
+  reader is now shared with the AXML decoder instead of duplicated.
+
+### Fixed
+
+- AXML colors: the four value types are RGB8, ARGB8, RGB4 and ARGB4 — the 4-bit
+  forms now expand each nibble to a full byte (and the wider forms keep their
+  channel order), so decoded color values are right instead of plausible.
+
 ## [v0.7.3] - 2026-09-28
 
 ### Added

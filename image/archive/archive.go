@@ -89,6 +89,12 @@ func Open(path string) (Archive, error) {
 		return &rarArchive{path: path}, nil
 	case "asar":
 		return &asarArchive{path: path}, nil
+	case "android-boot":
+		return openBootImg(path)
+	case "py2exe":
+		return openPy2Exe(path)
+	case "unity":
+		return openUnityFS(path)
 	case "rpm":
 		return &rpmArchive{path: path}, nil
 	case "cab":
@@ -387,6 +393,42 @@ func zipDecodeAXML(f *zip.File) (string, bool) {
 	return decoded, true
 }
 
+// maybeARSCName reports whether the entry is an Android resource table.
+func maybeARSCName(name string) bool {
+	lower := strings.ToLower(name)
+	base := lower
+	if i := strings.LastIndex(lower, "/"); i >= 0 {
+		base = lower[i+1:]
+	}
+	return base == "resources.arsc" || strings.HasSuffix(base, ".arsc")
+}
+
+// zipDecodeARSC reads a zip entry and renders it when it is a binary Android
+// resource table.
+func zipDecodeARSC(f *zip.File) (string, bool) {
+	if f.UncompressedSize64 == 0 || f.UncompressedSize64 > arscMaxEntrySize {
+		return "", false
+	}
+	rc, err := f.Open()
+	if err != nil {
+		return "", false
+	}
+	defer rc.Close()
+	data, err := io.ReadAll(io.LimitReader(rc, arscMaxEntrySize+1))
+	if err != nil || !isARSC(data) {
+		return "", false
+	}
+	decoded, err := DecodeARSC(data)
+	if err != nil {
+		return "", false
+	}
+	return decoded, true
+}
+
+// arscMaxEntrySize bounds how much of a table is buffered for decoding; real
+// ones stay well below this.
+const arscMaxEntrySize = 64 << 20
+
 // axmlMaxEntrySize bounds how much of an entry is buffered for AXML decoding;
 // compiled manifests and layout files stay well below this.
 const axmlMaxEntrySize = 8 << 20
@@ -418,6 +460,12 @@ func (a *zipArchive) Open(name string) (io.ReadCloser, int64, error) {
 		}
 		if maybeAXMLName(f.Name) {
 			if decoded, ok := zipDecodeAXML(f); ok {
+				_ = zr.Close()
+				return io.NopCloser(strings.NewReader(decoded)), int64(len(decoded)), nil
+			}
+		}
+		if maybeARSCName(f.Name) {
+			if decoded, ok := zipDecodeARSC(f); ok {
 				_ = zr.Close()
 				return io.NopCloser(strings.NewReader(decoded)), int64(len(decoded)), nil
 			}

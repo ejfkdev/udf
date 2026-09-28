@@ -41,6 +41,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 			{"udf cp ./image.tar /etc/passwd ./passwd", "单独提取一个文件"},
 			{"udf cat ./image.tar /etc/passwd", "单个文件内容写到 stdout（可管道）"},
 			{"udf xxd ./image.tar /etc/passwd", "以十六进制预览文件头"},
+			{"udf ls ./boot.img", "安卓 boot 镜像：内核/ramdisk 及 ramdisk 内文件"},
+			{"udf ls ./app.exe", "py2exe：PE 资源（PYTHONSCRIPT 为 .pyc）+ 附加模块归档"},
 			{"udf ls ./disk.qcow2", "磁盘镜像：列出分区/逻辑卷"},
 			{"udf cp ./disk.qcow2 /p1/etc/hostname .", "从磁盘镜像提取单个文件"},
 			{"udf ./image.tar -o ./out", "解包整镜像（extract 为默认命令）"},
@@ -50,10 +52,13 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 		formats: `支持的输入（按文件内容识别，不靠扩展名）:
   归档:     tar / tar.gz(tgz) / tar.xz / tar.bz2 / tar.zst / tar.lz4 / zip / 7z / rar /
             cpio(cpio.gz/xz/zst，含 initramfs) / asar / rpm / deb(ipk) / cab（含 .msi 内嵌）/ nar(nix) / xar(.pkg) / .ppkg，以及 OCI 布局 / OCI 归档(.oci.tar，含 flatpak) / docker save
-  可执行封装: pyinstaller(onefile，含 PYZ，重建 .pyc) / nuitka onefile(附加与内嵌载荷) /
-            .NET single-file(bundle v1/v2/v6，含 deflate) / zip 自解压 exe；APK 内二进制 AXML 自动解码为文本 XML
+  可执行封装: pyinstaller(onefile，含 PYZ，重建 .pyc) / py2exe(PYTHONSCRIPT 解码为 .pyc，附加模块 zip 列出) /
+            nuitka onefile(附加与内嵌载荷) / .NET single-file(bundle v1/v2/v6，含 deflate) / zip 自解压 exe
+  安卓:     boot.img(v0-v4：内核/ramdisk/dtb 及 ramdisk 内 cpio 文件) / sparse 稀疏 img(磁盘容器) /
+            resources.arsc(资源表解码，名称与引用可读)；APK 内二进制 AXML 自动解码为文本 XML
+  游戏资源: Unity AssetBundle(UnityFS：按节点解压 none/LZ4/LZMA；LZHAM 与加密会明确报不支持)
   虚拟磁盘: qcow2 / qcow1 / vmdk / vhd(vhdx) / vdi / qed / parallels / vma / ova(ovf) / sif / ffu /
-            wim(esd/swm) / raw(img) / ami / appimage
+            wim(esd/swm) / raw(img) / ami / appimage / 安卓 sparse img
   文件系统: ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs(未压缩) / fat12/16/32，含 LVM2 逻辑卷`,
 		options: `内置选项:
   -h, --help         显示帮助（总览或当前子命令）
@@ -84,6 +89,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 			{"udf cp ./image.tar /etc/passwd ./passwd", "extract a single file"},
 			{"udf cat ./image.tar /etc/passwd", "write a single file to stdout (pipeable)"},
 			{"udf xxd ./image.tar /etc/passwd", "hex-dump a file header"},
+			{"udf ls ./boot.img", "Android boot image: kernel/ramdisk and the ramdisk's files"},
+			{"udf ls ./app.exe", "py2exe: PE resources (PYTHONSCRIPT as .pyc) + appended module archive"},
 			{"udf ls ./disk.qcow2", "disk image: list partitions / logical volumes"},
 			{"udf cp ./disk.qcow2 /p1/etc/hostname .", "extract a single file from a disk image"},
 			{"udf ./image.tar -o ./out", "extract the whole image (extract is the default command)"},
@@ -93,10 +100,14 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 		formats: `Supported inputs (detected by content, not extension):
   archives:      tar / tar.gz (tgz) / tar.xz / tar.bz2 / tar.zst / tar.lz4 / zip / 7z / rar /
                  cpio (cpio.gz/xz/zst, incl. initramfs) / asar / rpm / deb (ipk) / cab (incl. cabs inside .msi) / nar (nix) / xar (.pkg) / .ppkg, plus OCI layouts, oci-archive tars (incl. flatpak) and docker save dirs
-  exe bundles:   pyinstaller (onefile, incl. PYZ, rebuilds .pyc) / nuitka onefile (appended and embedded payloads) /
-                 .NET single-file (bundle v1/v2/v6, incl. deflate) / zip self-extracting exes; binary AXML inside APKs is decoded to text XML
+  exe bundles:   pyinstaller (onefile, incl. PYZ, rebuilds .pyc) / py2exe (PYTHONSCRIPT decoded to .pyc,
+                 appended module archive listed) / nuitka onefile (appended and embedded payloads) /
+                 .NET single-file (bundle v1/v2/v6, incl. deflate) / zip self-extracting exes
+  android:       boot.img (v0-v4: kernel/ramdisk/dtb and the ramdisk's own cpio files) / sparse img (disk container) /
+                 resources.arsc (resource table decoded, names and references readable)
+  game assets:   Unity AssetBundles (UnityFS: per-node decompression, none/LZ4/LZMA; LZHAM and encryption are reported unsupported)
   disk images:   qcow2 / qcow1 / vmdk / vhd (vhdx) / vdi / qed / parallels / vma / ova (ovf) / sif / ffu /
-                 wim (esd/swm) / raw (img) / ami / appimage
+                 wim (esd/swm) / raw (img) / ami / appimage / Android sparse img
   filesystems:   ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs (uncompressed) / fat12/16/32,
                  incl. LVM2 logical volumes`,
 		options: `Built-in options:

@@ -65,11 +65,25 @@ func Detect(path string) (string, error) {
 		}
 		return "", nil
 	}
+	if hasPrefix(b, unityFSMagic) {
+		return "unity", nil
+	}
+	if hasPrefix(b, bootMagic) {
+		// Validate the header: the magic alone is weak.
+		if _, err := openBootImg(path); err == nil {
+			return "android-boot", nil
+		}
+	}
 	if isASAR(path) {
 		return "asar", nil
 	}
 	if isPyInstaller(path) {
 		return "pyinstaller", nil
+	}
+	if isPy2Exe(path) {
+		// Before the zip-sfx check: a one-file py2exe exe also has an
+		// appended zip, and this format reads it as well.
+		return "py2exe", nil
 	}
 	if isDotnetBundle(path) {
 		return "dotnet-bundle", nil

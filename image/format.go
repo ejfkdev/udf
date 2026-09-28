@@ -16,7 +16,8 @@ import (
 // never by filename extension, so a misnamed or extension-less file is still
 // dispatched correctly.
 const (
-	magicQCow     = "\x51\x46\x49\xfb" // "QFI\xfb" (qcow v1/v2/v3)
+	magicQCow = "\x51\x46\x49\xfb" // "QFI\xfb" (qcow v1/v2/v3)
+	// sparseMagic (an Android sparse image) lives in sparse.go.
 	magicVMDK     = "KDMV"
 	magicVHD      = "conectix"
 	magicVHDX     = "vhdxfile"
@@ -74,6 +75,8 @@ func detectDiskContainer(path string) (string, error) {
 		return "vdi", nil
 	case hasPrefix(b, "WithoutFreeSpace") || hasPrefix(b, "WithouFreSpacExt"):
 		return "parallels", nil
+	case hasPrefix(b, sparseMagic):
+		return "sparse", nil
 	case hasPrefix(b, magicQED):
 		return "qed", nil
 	case hasPrefix(b, magicVMA):

@@ -42,8 +42,9 @@ Archive handling:
 - Extract image archives into a merged `rootfs`; a batch of archives is extracted with one archive per core, results in input order
 - Random-access index for large gzip image archives: the first command builds it in one pass with a block-aware deflate scanner (~500 MB/s decompressed) and picks the layer directories out of that same pass, after which `ls`/`cp`/`cat`/`extract` on a multi-GB docker-save `tar.gz` drop to well under a few seconds
 - Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz4`, `.zip`, `.7z`, `.rar`, `.cpio` (and `.cpio.gz`/`.cpio.xz`/`.cpio.zst`, e.g. initramfs), `.asar` (Electron), `.rpm`, `.deb`/`.ipk`, `.cab`/`.msi`-embedded cabs, `.nar` (Nix), `.xar`/`.pkg` (macOS installer) (and `.ppkg` Windows provisioning packages, an OPC/ZIP)
-- Executable bundle formats: PyInstaller onefile (CArchive + PYZ, `.pyc` reconstruction), Nuitka onefile (appended and embedded payloads), .NET single-file apps (bundle v1/v2/v6, incl. deflate), ZIP self-extracting executables; binary Android XML (AXML) inside APKs — `AndroidManifest.xml`, layouts — is decoded to readable text XML automatically
-- Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami`, OVA, OVF, VMA, SIF, AppImage (ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes)
+- Executable bundle formats: PyInstaller onefile (CArchive + PYZ, `.pyc` reconstruction), py2exe (PE resources, the bootstrap `PYTHONSCRIPT` script rebuilt as a `.pyc`, and the module archive appended to the exe), Nuitka onefile (appended and embedded payloads), .NET single-file apps (bundle v1/v2/v6, incl. deflate), ZIP self-extracting executables
+- Android and game containers: `boot.img` (v0–v4: kernel, ramdisk, dtb, plus every file inside the ramdisk's cpio), sparse images (`img`, expanded on the fly as a disk container) and Unity AssetBundles (`UnityFS`: per-node decompression — stored, LZ4/LZ4HC, LZMA — with entry names and byte-exact contents); binary Android XML (AXML) inside APKs — `AndroidManifest.xml`, layouts — and the compiled resource table `resources.arsc` are decoded to readable text, resource names, configurations and `@package/name` references resolving against the table itself
+- Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami`, OVA, OVF, VMA, SIF, AppImage, Android sparse (ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes)
 - Common image layouts: flat `manifest.json + config.json + layers/...`, classic `docker save` (`<layer-id>/layer.tar`), OCI image layout directories, and single-file OCI image archives (`.oci.tar`, incl. flatpak bundles)
 - Input may be a single archive, a glob pattern, or a directory (top level scanned)
 
@@ -207,7 +208,7 @@ Built-in conveniences: `-h` per-command help, `-v` version, `--json` for machine
 
 Every command takes **one input expression** for the archive:
 
-- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`/PyInstaller/Nuitka/.NET single-file executable) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`) — required by `info`, `ls` and `cp`
+- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`/PyInstaller/py2exe/Nuitka/.NET single-file executable, Android `boot.img`, Unity AssetBundle) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`, Android sparse `img`) — required by `info`, `ls` and `cp`
 - a glob pattern, or a directory (top level scanned, not recursive) — `extract` also accepts these and expands them into a batch
 
 Examples:
@@ -542,8 +543,8 @@ filesystem image.
 
 Supported:
 
-- archive extraction (tar, tar.gz/tgz, tar.xz, tar.bz2, tar.zst, tar.lz4, zip, 7z, rar, cpio, cpio.gz/xz/zst, asar, rpm, deb/ipk, cab, nar, xar/pkg, pyinstaller, nuitka, .NET single-file, zip SFX, OCI layout, oci-archive/flatpak, `docker save`), batch via directory or glob
-- disk / VM images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM/ESD/SWM, FFU, VMA, SIF, OVA/OVF, raw/`.img`/`.ami`
+- archive extraction (tar, tar.gz/tgz, tar.xz, tar.bz2, tar.zst, tar.lz4, zip, 7z, rar, cpio, cpio.gz/xz/zst, asar, rpm, deb/ipk, cab, nar, xar/pkg, pyinstaller, py2exe, nuitka, .NET single-file, zip SFX, OCI layout, oci-archive/flatpak, `docker save`, Android boot.img, Unity AssetBundle), batch via directory or glob
+- disk / VM images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM/ESD/SWM, FFU, VMA, SIF, OVA/OVF, raw/`.img`/`.ami`, Android sparse `img`
 - filesystems (whole disk, partitions, or LVM2 logical volumes): ext2/3/4, xfs, btrfs, NTFS, squashfs, ISO9660, UDF, exFAT, EROFS (uncompressed), FAT12/16/32
 - listing without extracting (`ls`), selective extraction (`cp`), metadata (`info`), single-file read to stdout (`cat`), hex header dump (`xxd`), full extraction (`extract`)
 - one binary, three interfaces: CLI, HTTP (REST + OpenAPI), MCP tools

@@ -48,7 +48,7 @@ import (
 )
 
 // IsDiskImage reports whether path is a virtual disk image (qcow2/vmdk/vhd/
-// vhdx/vdi/parallels/qed/qcow1/vma/sif/ova/ovf/ffu/wim/esd/swm) or a raw
+// vhdx/vdi/parallels/qed/qcow1/vma/sif/ova/ovf/ffu/wim/esd/swm/sparse) or a raw
 // filesystem image (ext4/xfs/squashfs/ISO9660/UDF/exFAT/EROFS/FAT). Detection
 // is content based (file magic), not by filename extension. Disk images are a
 // different input class from the tar/zip archives handled elsewhere.
@@ -213,6 +213,18 @@ func openDisks(path string) ([]*diskBackend, func() error, error) {
 			format: "vmdk",
 			name:   filepath.Base(path),
 		}}, func() error { return f.Close() }, nil
+	case "sparse":
+		d, err := openSparse(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []*diskBackend{{
+			ra:     d,
+			size:   d.Size(),
+			path:   path,
+			format: "sparse",
+			name:   filepath.Base(path),
+		}}, d.Close, nil
 	case "vdi":
 		f, err := os.Open(path)
 		if err != nil {
