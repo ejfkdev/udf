@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/ejfkdev/udf/cachedir"
 	"github.com/ejfkdev/udf/fsview"
 	"github.com/ejfkdev/udf/gzipidx"
 	arch "github.com/ejfkdev/udf/image/archive"
@@ -39,11 +40,7 @@ func loadImageIndex(imageTarPath string) (*gzipidx.Reader, bool) {
 	if !indexableImage(imageTarPath) {
 		return nil, false
 	}
-	dir := cacheDir()
-	if dir == "" {
-		return nil, false
-	}
-	path := filepath.Join(dir, "idx", cacheKeyFor(imageTarPath, "gzipidx")+".idx")
+	path := filepath.Join(cachedir.IndexDir(), cacheKeyFor(imageTarPath, "gzipidx")+".idx")
 	ix, err := gzipidx.Load(path)
 	if err != nil || !ix.Usable() {
 		return nil, false
@@ -62,11 +59,7 @@ func ensureImageIndex(imageTarPath string) (*gzipidx.Reader, bool) {
 	if !indexableImage(imageTarPath) {
 		return nil, false
 	}
-	dir := cacheDir()
-	if dir == "" {
-		return nil, false
-	}
-	idxDir := filepath.Join(dir, "idx")
+	idxDir := cachedir.IndexDir()
 	path := filepath.Join(idxDir, cacheKeyFor(imageTarPath, "gzipidx")+".idx")
 
 	if ix, err := gzipidx.Load(path); err == nil && ix.Usable() {

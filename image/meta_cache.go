@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 
 	"github.com/djherbis/times"
+
+	"github.com/ejfkdev/udf/cachedir"
 )
 
 // cacheKeyFor derives a stable, small cache key from the source file's
@@ -44,16 +46,10 @@ func cacheKeyFor(path string, args ...string) string {
 const cacheFormat = "udf-cache-2"
 
 // cacheDir returns the directory holding small derived data (file listings,
-// image metadata, archive indexes): a per-user directory under the system
-// temporary directory. Every entry can be rebuilt from its source file, so the
-// directory may be deleted at any time and does not survive a reboot; the
-// UDF_CACHE_DIR environment variable overrides it.
-func cacheDir() string {
-	if dir := os.Getenv("UDF_CACHE_DIR"); dir != "" {
-		return dir
-	}
-	return filepath.Join(os.TempDir(), "ejfkdev", "udf")
-}
+// image metadata, archive indexes). It is the per-user directory under the
+// system temporary directory, so the operating system reclaims it on its own
+// schedule; see the cachedir package. UDF_CACHE_DIR overrides it.
+func cacheDir() string { return cachedir.Dir() }
 
 func loadCachedJSON(key string, v any) bool {
 	dir := cacheDir()
@@ -68,11 +64,8 @@ func loadCachedJSON(key string, v any) bool {
 }
 
 func storeCachedJSON(key string, v any) {
-	dir := cacheDir()
+	dir := cachedir.Ensure()
 	if dir == "" {
-		return
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
 	data, err := json.Marshal(v)

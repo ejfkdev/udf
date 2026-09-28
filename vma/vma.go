@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/ejfkdev/udf/cachedir"
 )
 
 const clusterSize = 65536
@@ -80,7 +82,7 @@ func OpenFile(path string) (*Image, error) {
 		if di.size == 0 {
 			continue
 		}
-		tmp, err := os.CreateTemp("", "udf-vma-*.raw")
+		tmp, err := cachedir.TempFile("vma-*.raw")
 		if err != nil {
 			closeDisks(disks)
 			return nil, err

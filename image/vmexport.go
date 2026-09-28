@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/klauspost/compress/gzip"
+
+	"github.com/ejfkdev/udf/cachedir"
 )
 
 // vmExportDiskSuffixes lists the disk-image filename suffixes extracted out of
@@ -155,7 +157,7 @@ func extractVMExportDisks(path string, destDir string) ([]string, error) {
 // decompressed to a temporary directory (removed on Close) and opened through
 // the normal disk-container path.
 func openVMExport(path string) ([]*diskBackend, func() error, error) {
-	dir, err := os.MkdirTemp("", "udf-vmexport-*")
+	dir, err := cachedir.Temp("vmexport-*")
 	if err != nil {
 		return nil, nil, err
 	}

@@ -247,6 +247,19 @@ Index  Image                          OS     Architecture  Created              
 
 `--json` 返回同样的结构化数组。`Size` 是该镜像各层在归档里占的空间；未建索引的归档（未压缩或很小的）该列为空。
 
+### 缓存与临时文件
+
+udf 产生的派生数据都在系统临时目录下的同一个用户目录里：
+
+```text
+<temp>/ejfkdev/udf/          macOS: /var/folders/…/T/ejfkdev/udf，Linux: /tmp/ejfkdev/udf，Windows: %TEMP%\ejfkdev\udf
+├── *.json                   派生值：输入分类、镜像元数据、列表、镜像清单
+├── idx/*.idx                大 gzip 归档的随机访问索引
+└── tmp/*                    单次运行的临时空间（从 OVA/VMA/VM export 解出的磁盘）
+```
+
+这些都不是正确性所需：每一项都能从输入文件重建，临时空间由创建它的那次运行删除。放在系统临时目录是为了让各系统按自己的规则回收——macOS 会清掉 3 天未使用的条目，Linux 在启动时或 10 天后清 `/tmp`——而系统不清的地方由 udf 自己清理（派生值 7 天未重写就删，被中断的临时空间 1 天后删），所以在 Windows 上也不会无限增长。`UDF_CACHE_DIR` 可改到别处；手动删掉整个目录永远安全。
+
 ### `ls` — 不解压列出目录内容
 
 `udf ls` 在内存中构建合并后的文件系统视图，以 `ls -al` 信息呈现，不向磁盘写入任何文件。CLI 输出对齐表格，HTTP/MCP 返回同源的结构化 JSON。

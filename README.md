@@ -262,6 +262,27 @@ Index  Image                          OS     Architecture  Created              
 layers take in the archive, and is empty when the archive's members were not
 indexed (an uncompressed or small archive).
 
+### Cache and temporary files
+
+Everything udf derives lives in one per-user directory inside the system
+temporary directory:
+
+```text
+<temp>/ejfkdev/udf/          macOS /var/folders/…/T/ejfkdev/udf, Linux /tmp/ejfkdev/udf, Windows %TEMP%\ejfkdev\udf
+├── *.json                   derived values: input class, image metadata, listings, image summaries
+├── idx/*.idx                random-access indexes for large gzip archives
+└── tmp/*                    per-run scratch (disks unpacked from an OVA/VMA/VM export)
+```
+
+Nothing here is needed for correctness: every entry is rebuilt from its input
+file, and scratch is removed by the run that made it. The location is chosen so
+each system reclaims it on its own terms — macOS purges entries unused for
+three days, Linux clears `/tmp` at boot or after ten days — and udf prunes what
+the OS leaves behind (derived values after seven days without being rewritten,
+interrupted scratch after a day), so it stays bounded on Windows as well.
+`UDF_CACHE_DIR` points it somewhere else (a specific volume, or `/dev/null`-style
+non-persistence); deleting the directory by hand is always safe.
+
 ### `ls` — list directory contents without extracting
 
 `udf ls` builds the merged filesystem view in memory and renders it like `ls -al`, without writing anything to disk. The CLI prints an aligned table; HTTP and MCP return the same data as structured JSON.

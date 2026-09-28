@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [Unreleased]
+
+### Changed
+
+- Everything udf derives or unpacks now lives in one per-user directory inside
+  the system temporary directory — `<temp>/ejfkdev/udf` (`/var/folders/…/T/…`
+  on macOS, `/tmp` on Linux, `%TEMP%` on Windows), with `UDF_CACHE_DIR`
+  overriding the location. Derived values (`*.json`, `idx/*.idx`) and per-run
+  scratch (`tmp/*`, the disks unpacked from an OVA/VMA/VM export) sit under the
+  same root, so each system's own reclamation applies (macOS purges entries
+  unused for three days, Linux clears /tmp at boot or after ten days) and udf
+  prunes what the OS leaves behind — derived values after seven days without
+  being rewritten, interrupted scratch after a day — so nothing grows without
+  bound on Windows either. Deleting the directory by hand is always safe: every
+  entry is rebuilt from its input, and scratch is removed by the run that made
+  it.
+
 ## [v0.7.2] - 2026-09-28
 
 ### Added

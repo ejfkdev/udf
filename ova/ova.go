@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ejfkdev/udf/cachedir"
 	"github.com/ejfkdev/udf/vmdk"
 )
 
@@ -58,7 +59,7 @@ func OpenFile(path string) (*Image, error) {
 			continue
 		}
 
-		tmp, err := os.CreateTemp("", "udf-ova-*.vmdk")
+		tmp, err := cachedir.TempFile("ova-*.vmdk")
 		if err != nil {
 			closeTempDisks(disks)
 			return nil, err
