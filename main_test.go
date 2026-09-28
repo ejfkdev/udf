@@ -138,7 +138,7 @@ func writeTarEntry(t *testing.T, tw *tar.Writer, name string, body []byte) {
 func TestInfoImage(t *testing.T) {
 	imagePath := writeTestImage(t)
 
-	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1})
+	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1, Index: -1})
 	if err != nil {
 		t.Fatalf("info: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestInfoImage(t *testing.T) {
 func TestInfoImageMultipleImages(t *testing.T) {
 	imagePath := writeTestMultiImage(t)
 
-	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1})
+	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1, Index: -1})
 	if err != nil {
 		t.Fatalf("info: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestInfoImageMultipleImages(t *testing.T) {
 	}
 
 	// Selecting an image keeps the detailed answer.
-	got, err = infoImage(context.Background(), &InfoArgs{Archive: imagePath, RepoTag: "test/two:latest", ImageIndex: -1})
+	got, err = infoImage(context.Background(), &InfoArgs{Archive: imagePath, RepoTag: "test/two:latest", ImageIndex: -1, Index: -1})
 	if err != nil {
 		t.Fatalf("info by tag: %v", err)
 	}
@@ -741,17 +741,16 @@ func TestSelectionFlags(t *testing.T) {
 		args InfoArgs
 		want int // expected image index, -1 for an error
 	}{
-		{"tag short name", InfoArgs{Tag: "two", ImageIndex: -1}, 1},
-		{"tag name:tag", InfoArgs{Tag: "two:latest", ImageIndex: -1}, 1},
-		{"tag full repo tag", InfoArgs{Tag: "test/one:latest", ImageIndex: -1}, 0},
-		{"tag bare, shared", InfoArgs{Tag: "latest", ImageIndex: -1}, -1}, // both images carry it
-		{"tag unknown", InfoArgs{Tag: "nope", ImageIndex: -1}, -1},
-		{"image by index", InfoArgs{Image: "1", ImageIndex: -1}, 1},
-		{"image by name", InfoArgs{Image: "one", ImageIndex: -1}, 0},
-		{"image by name:tag", InfoArgs{Image: "two:latest", ImageIndex: -1}, 1},
-		{"repo tag still works", InfoArgs{RepoTag: "test/one:latest", ImageIndex: -1}, 0},
-		{"two selectors", InfoArgs{Tag: "one", ImageIndex: 1}, -1},
-		{"tag and image", InfoArgs{Tag: "one", Image: "1", ImageIndex: -1}, -1},
+		{"tag short name", InfoArgs{Tag: "two", ImageIndex: -1, Index: -1}, 1},
+		{"tag name:tag", InfoArgs{Tag: "two:latest", ImageIndex: -1, Index: -1}, 1},
+		{"tag full repo tag", InfoArgs{Tag: "test/one:latest", ImageIndex: -1, Index: -1}, 0},
+		{"tag bare, shared", InfoArgs{Tag: "latest", ImageIndex: -1, Index: -1}, -1}, // both images carry it
+		{"tag unknown", InfoArgs{Tag: "nope", ImageIndex: -1, Index: -1}, -1},
+		{"index (preferred spelling)", InfoArgs{Index: 1, ImageIndex: -1}, 1},
+		{"image-index (compatibility spelling)", InfoArgs{ImageIndex: 1, Index: -1}, 1},
+		{"repo-tag (compatibility spelling)", InfoArgs{RepoTag: "test/one:latest", ImageIndex: -1, Index: -1}, 0},
+		{"tag and index", InfoArgs{Tag: "one", Index: 1, ImageIndex: -1}, -1},
+		{"tag and image-index", InfoArgs{Tag: "one", ImageIndex: 1, Index: -1}, -1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -778,7 +777,7 @@ func TestSelectionFlags(t *testing.T) {
 	}
 
 	// Without a selection the archive is still listed, not an error.
-	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1})
+	got, err := infoImage(context.Background(), &InfoArgs{Archive: imagePath, ImageIndex: -1, Index: -1})
 	if err != nil {
 		t.Fatalf("unselected info: %v", err)
 	}

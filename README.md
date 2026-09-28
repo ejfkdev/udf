@@ -140,7 +140,7 @@ curl -s http://127.0.0.1:8080/openapi.json
 ./udf mcp http --addr 127.0.0.1:9000 --bearer s3cret
 ```
 
-Route overview: `GET /info?archive=…`, `GET /ls?archive=…&path=…`, `POST /cp`, `GET /cat?archive=…&source=…`, `GET /xxd?archive=…&source=…`, `POST /extract`, plus `/healthz` and `/openapi.json`. Each route takes the same selection parameters as the CLI (`tag=`, `image=`, `repo_tag=`, `image_index=`), so `?tag=safeline-mgt:latest` works over HTTP too.
+Route overview: `GET /info?archive=…`, `GET /ls?archive=…&path=…`, `POST /cp`, `GET /cat?archive=…&source=…`, `GET /xxd?archive=…&source=…`, `POST /extract`, plus `/healthz` and `/openapi.json`. Each route takes the same selection parameters as the CLI (`tag=`, `repo-tag=`, `index=`, `image-index=`), so `?tag=safeline-mgt:latest` works over HTTP too.
 
 In MCP clients, register udf as a stdio server:
 
@@ -228,7 +228,7 @@ Examples:
 ./udf info -t demo/app:latest ./image.tar   # the detail of one image
 ```
 
-One image (also the form used with `-t`/`--repo_tag` or `-i`/`--image_index`, or `--tag`/`--image`):
+One image (also the form used when one is selected with `--tag` or `--index`):
 
 ```text
 index           0
@@ -392,11 +392,11 @@ output: /data/demo/bundle/repo_app_1.0
 
 Command flags:
 
-- `-t, --repo_tag`, `--tag` — select the image by tag: a full `RepoTags` entry, `name:tag`, a repository name or a bare tag, as long as the name is unambiguous (`info`, `ls`, `cp`, `cat`, `xxd`, `extract`)
-- `-i, --image_index`, `--image` — select the image by its index in the `manifest.json` array; `--image` also takes a name or tag (all commands)
+- `-t, --repo-tag` (preferred: `--tag`) — select the image by tag: a full `RepoTags` entry, `name:tag`, a repository name or a bare tag, as long as the name is unambiguous (`info`, `ls`, `cp`, `cat`, `xxd`, `extract`)
+- `-i, --image-index` (preferred: `--index`) — select the image by its index in the `manifest.json` array (all commands)
 - `-o, --output` — output parent directory (`extract`)
 - `-f, --force` — write into an existing non-empty target directory (`extract`)
-- `-b, --buffer_size` — copy buffer size in bytes (`cp`, `cat`, `extract`)
+- `-b, --buffer-size` — copy buffer size in bytes (`cp`, `cat`, `extract`)
 - `-n, --bytes` — number of bytes to dump (`xxd`, default 256)
 - `-s, --offset` — skip this many bytes from the start before dumping (`xxd`)
 
@@ -413,8 +413,8 @@ If an archive contains multiple images:
 - `info` prints the images (one line per image); the commands that need a
   target (`ls`, `cp`, `cat`, `xxd`, `extract`) print an error that lists the
   available options
-- select one with any of `--tag` / `-t` / `--repo_tag`, or `--image` / `-i` /
-  `--image_index`
+- select one with `--tag` (also `-t` / `--repo-tag`) by name, or `--index`
+  (also `-i` / `--image-index`) by position
 
 `--tag` accepts any name an image is listed under, as long as it is
 unambiguous — a full repo tag, `name:tag`, a repository name or a bare tag:
@@ -425,13 +425,13 @@ unambiguous — a full repo tag, `name:tag`, a repository name or a bare tag:
 ./udf info --tag safeline-mgt:latest ./image.tar                       # name:tag
 ./udf info --tag safeline-mgt ./image.tar                              # repository name
 ./udf info --tag 15.18 ./image.tar                                     # bare tag, if only one image has it
-./udf info --image 3 ./image.tar                                       # by index
-./udf info --image safeline-luigi:9.1.0-lts ./image.tar                # --image takes a name too
+./udf info --index 3 ./image.tar                                      # by position
+./udf info --tag safeline-luigi:9.1.0-lts ./image.tar                  # a tag with its version
 ```
 
 A name that matches more than one image is refused with the list of candidates
 (`"latest" matches more than one image: [1]=…`), so a selection is never a
-guess. `-t`/`--repo_tag` resolve the same way, so full tags keep working and
+guess. `-t`/`--repo-tag` resolve the same way, so full tags keep working and
 shorter ones now work too.
 
 ## Generated Files

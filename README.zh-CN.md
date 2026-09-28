@@ -129,7 +129,7 @@ curl -s http://127.0.0.1:8080/openapi.json
 ./udf mcp http --addr 127.0.0.1:9000 --bearer s3cret
 ```
 
-路由一览：`GET /info?archive=…`、`GET /ls?archive=…&path=…`、`POST /cp`、`GET /cat?archive=…&source=…`、`GET /xxd?archive=…&source=…`、`POST /extract`，另有 `/healthz` 与 `/openapi.json`。各路由接受与 CLI 相同的镜像选择参数（`tag=`、`image=`、`repo_tag=`、`image_index=`），例如 `?tag=safeline-mgt:latest`。
+路由一览：`GET /info?archive=…`、`GET /ls?archive=…&path=…`、`POST /cp`、`GET /cat?archive=…&source=…`、`GET /xxd?archive=…&source=…`、`POST /extract`，另有 `/healthz` 与 `/openapi.json`。各路由接受与 CLI 相同的镜像选择参数（`tag=`、`repo-tag=`、`index=`、`image-index=`），例如 `?tag=safeline-mgt:latest`。
 
 在 MCP 客户端中，将 udf 注册为 stdio 服务：
 
@@ -217,7 +217,7 @@ go build -o udf .
 ./udf info -t demo/app:latest ./image.tar    # 指定镜像的详细信息
 ```
 
-单镜像（带 `-t`/`--repo_tag` 或 `-i`/`--image_index`，或 `--tag`/`--image` 时也是这个形态）：
+单镜像（用 `--tag` 或 `--index` 指定某个镜像时也是这个形态）：
 
 ```text
 index           0
@@ -367,11 +367,11 @@ archive      output_dir                     layers  error
 
 命令级参数：
 
-- `-t, --repo_tag`, `--tag` — 按 tag 选择镜像：完整 `RepoTags`、`name:tag`、仓库名或单独 tag 都行，只要没有歧义（`info`、`ls`、`cp`、`cat`、`xxd`、`extract` 均可用）
-- `-i, --image_index`, `--image` — 按 `manifest.json` 数组中的索引选择镜像；`--image` 也接受名字或 tag（同上）
+- `-t, --repo-tag`（推荐写法 `--tag`）— 按 tag 选择镜像：完整 `RepoTags`、`name:tag`、仓库名或单独 tag 都行，只要没有歧义（`info`、`ls`、`cp`、`cat`、`xxd`、`extract` 均可用）
+- `-i, --image-index`（推荐写法 `--index`）— 按 `manifest.json` 数组中的索引选择镜像（同上）
 - `-o, --output` — 输出父目录（`extract`）
 - `-f, --force` — 强制写入已存在的非空目标目录（`extract`）
-- `-b, --buffer_size` — 复制缓冲区大小，单位字节（`cp`、`cat`、`extract`）
+- `-b, --buffer-size` — 复制缓冲区大小，单位字节（`cp`、`cat`、`extract`）
 - `-n, --bytes` — 要转储的字节数（`xxd`，默认 256）
 - `-s, --offset` — 从文件起始跳过多少字节再开始（`xxd`）
 
@@ -386,7 +386,7 @@ archive      output_dir                     layers  error
 如果一个归档里有多个镜像：
 
 - `info` 会把镜像列出来（每个镜像一行）；真正需要目标的命令（`ls`、`cp`、`cat`、`xxd`、`extract`）会报错并列出可选值
-- 用 `--tag` / `-t` / `--repo_tag`，或 `--image` / `-i` / `--image_index` 指定
+- 按名字选择用 `--tag`（也可 `-t` / `--repo-tag`），按序号选择用 `--index`（也可 `-i` / `--image-index`）
 
 `--tag` 接受镜像被列出的**任何**写法，只要没有歧义——完整 RepoTag、`name:tag`、仓库名、或单独的 tag：
 
@@ -396,11 +396,11 @@ archive      output_dir                     layers  error
 ./udf info --tag safeline-mgt:latest ./image.tar                       # name:tag
 ./udf info --tag safeline-mgt ./image.tar                              # 仓库名
 ./udf info --tag 15.18 ./image.tar                                     # 单独 tag（仅当唯一时）
-./udf info --image 3 ./image.tar                                       # 按索引
-./udf info --image safeline-luigi:9.1.0-lts ./image.tar                # --image 也接受名字
+./udf info --index 3 ./image.tar                                      # 按序号
+./udf info --tag safeline-luigi:9.1.0-lts ./image.tar                  # 名字带版本号
 ```
 
-匹配到多个镜像时会被拒绝并列出候选（`"latest" matches more than one image: [1]=…`），**从不替你猜**。`-t`/`--repo_tag` 走同一套解析，所以完整写法照旧可用，短写法现在也能用。
+匹配到多个镜像时会被拒绝并列出候选（`"latest" matches more than one image: [1]=…`），**从不替你猜**。`-t`/`--repo-tag` 走同一套解析，所以完整写法照旧可用，短写法现在也能用。
 
 ## 生成文件
 

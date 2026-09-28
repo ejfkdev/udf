@@ -56,7 +56,7 @@ other = "禁用动态进度条"
 other = "界面语言，可选 zh 或 en"
 
 [err_selection_conflict]
-other = "只能使用一个镜像选择参数：--tag/-t、--image/-i、--repo_tag 或 --image_index"
+other = "只能使用一个镜像选择参数：--tag（按名字）或 --index（按序号）"
 
 [err_invalid_buffer]
 other = "无效的缓冲区大小: {{.Value}}"
@@ -89,13 +89,13 @@ other = "manifest.json 为空"
 other = "没有匹配 \"{{.Tag}}\" 的镜像（完整 RepoTag、name:tag、名称或 tag 都可）；可选值: {{.Available}}"
 
 [err_repo_tag_ambiguous]
-other = "\"{{.Tag}}\" 匹配到多个镜像: {{.Candidates}}；请用完整 RepoTag 或索引指定"
+other = "\"{{.Tag}}\" 匹配到多个镜像: {{.Candidates}}；请用完整 RepoTag 或 --index 指定"
 
 [err_image_index_out_of_range]
 other = "镜像索引超出范围: {{.Index}}；manifest 中共有 {{.Count}} 条记录"
 
 [err_multiple_images_require_selection]
-other = "当前归档中包含多个镜像，请使用 --tag/-t（完整 RepoTag、name:tag、名称或 tag）或 --image/-i 指定要提取的镜像；可选值: {{.Available}}"
+other = "当前归档中包含多个镜像，请使用 --tag（完整 RepoTag、name:tag、名称或 tag）或 --index 指定要提取的镜像；可选值: {{.Available}}"
 
 [msg_batch_processed]
 other = "成功处理镜像: {{.Count}}"

@@ -19,39 +19,26 @@ import (
 	"github.com/ejfkdev/udf/image"
 )
 
-// selectionFor validates and builds the image selection shared by every
-// command: archives may contain several images, and -t/-i pick one the same
-// way across all three interfaces.
-// selectionFor turns the four selection flags into one: -t/--repo_tag and
-// --tag name an image (a full repo tag, name:tag, name or tag — the image side
-// resolves the loose forms), -i/--image_index and --image take its index, and
-// --image accepts either an index or a name. Exactly one may be given.
-func selectionFor(repoTag string, imageIndex int, tag, imageSel string) (image.Selection, error) {
-	sel := image.Selection{ImageIndex: imageIndex, RepoTag: repoTag}
-	if strings.TrimSpace(tag) != "" {
-		sel.RepoTag = strings.TrimSpace(tag)
+// selectionFor turns the selection flags into one: --tag (spelled -t or
+// --repo-tag for compatibility) names an image — a full repo tag, name:tag, a
+// repository name or a bare tag, resolved by the image side — and --index
+// (spelled -i or --image-index) takes its number. Exactly one of the two may
+// be given, since an archive's images are picked by name or by position.
+func selectionFor(repoTag string, imageIndex int, tag string, index int) (image.Selection, error) {
+	sel := image.Selection{ImageIndex: -1}
+	if name := strings.TrimSpace(repoTag); name != "" {
+		sel.RepoTag = name
 	}
-	if v := strings.TrimSpace(imageSel); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			sel.ImageIndex = n
-		} else {
-			sel.RepoTag = v
-		}
+	if name := strings.TrimSpace(tag); name != "" {
+		sel.RepoTag = name
 	}
-	given := 0
-	for _, v := range []string{strings.TrimSpace(sel.RepoTag)} {
-		if v != "" {
-			given++
-		}
+	if index >= 0 {
+		sel.ImageIndex = index
+	} else if imageIndex >= 0 {
+		sel.ImageIndex = imageIndex
 	}
-	if sel.ImageIndex >= 0 {
-		given++
-	}
-	if given > 1 {
-		return image.Selection{}, errs.New(errs.KindInvalidInput, "use only one of --tag, --image, --repo_tag or --image_index")
-	}
-	if sel.ImageIndex < 0 {
-		sel.ImageIndex = -1
+	if sel.RepoTag != "" && sel.ImageIndex >= 0 {
+		return image.Selection{}, errs.New(errs.KindInvalidInput, "use only one of --tag (a name) or --index (a number)")
 	}
 	return sel, nil
 }
@@ -82,10 +69,10 @@ func toXyzErr(err error) error {
 
 type InfoArgs struct {
 	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
+	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
+	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
 }
 
 // ImageInfoResult is the detail of one selected image.
@@ -138,7 +125,7 @@ func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 		return &InfoResult{Plain: info}, nil
 	}
 
-	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Image)
+	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -186,10 +173,10 @@ func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 type LsArgs struct {
 	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
 	Path       string `json:"path" desc:"path inside the image; / lists disks/volumes, e.g. /vg1/root or /vg1/root/etc" default:"/" cli:"positional"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
+	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
+	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
 }
 
 func listImage(_ context.Context, in *LsArgs) ([]image.FileEntry, error) {
@@ -208,7 +195,7 @@ func listImage(_ context.Context, in *LsArgs) ([]image.FileEntry, error) {
 		return entries, nil
 	}
 
-	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Image)
+	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -226,11 +213,11 @@ type CpArgs struct {
 	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
 	Dest       string `json:"dest" desc:"destination path on this machine" required:"true" cli:"positional"`
-	BufferSize int    `json:"buffer_size" desc:"file copy buffer size in bytes" default:"1048576"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
+	BufferSize int    `json:"buffer-size" desc:"copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
+	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
+	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
 }
 
 type CpResult struct {
@@ -257,7 +244,7 @@ func copyEntry(_ context.Context, in *CpArgs) (*CpResult, error) {
 		}
 		return &CpResult{Source: in.Source, Dest: in.Dest, Extracted: count}, nil
 	}
-	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Image)
+	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -278,11 +265,11 @@ func copyEntry(_ context.Context, in *CpArgs) (*CpResult, error) {
 type CatArgs struct {
 	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/7z/rar/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
-	BufferSize int    `json:"buffer_size" desc:"copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
+	BufferSize int    `json:"buffer-size" desc:"copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
+	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
+	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
 }
 
 // catEntry streams the raw bytes of one file straight to stdout so the result
@@ -294,7 +281,7 @@ func catEntry(_ context.Context, in *CatArgs) (any, error) {
 		return nil, errs.New(errs.KindInvalidInput, fmt.Sprintf("invalid buffer size: %d", in.BufferSize))
 	}
 
-	rc, err := openImageFileReader(in.Archive, in.Source, in.RepoTag, in.ImageIndex, in.Tag, in.Image)
+	rc, err := openImageFileReader(in.Archive, in.Source, in.RepoTag, in.ImageIndex, in.Tag, in.Index)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +295,7 @@ func catEntry(_ context.Context, in *CatArgs) (any, error) {
 
 // openImageFileReader resolves one in-image path and returns a reader over its
 // bytes, routing disk images and archives the same way cp and cat do.
-func openImageFileReader(archive, source, repoTag string, imageIndex int, tag, imageSel string) (io.ReadCloser, error) {
+func openImageFileReader(archive, source, repoTag string, imageIndex int, tag string, index int) (io.ReadCloser, error) {
 	switch image.ClassifyInput(archive) {
 	case "disk":
 		rc, _, err := image.ReadDiskFile(archive, source)
@@ -324,7 +311,7 @@ func openImageFileReader(archive, source, repoTag string, imageIndex int, tag, i
 		return rc, nil
 	}
 
-	sel, err := selectionFor(repoTag, imageIndex, tag, imageSel)
+	sel, err := selectionFor(repoTag, imageIndex, tag, index)
 	if err != nil {
 		return nil, err
 	}
@@ -346,10 +333,10 @@ type XxdArgs struct {
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
 	Bytes      int    `json:"bytes" desc:"number of bytes to dump" default:"256" cli:"shorthand=n"`
 	Offset     int    `json:"offset" desc:"skip this many bytes from the start of the file before dumping" default:"0" cli:"shorthand=s"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
+	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
+	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
 }
 
 // xxdEntry returns a bounded hex+ASCII dump of one in-image file, mirroring the
@@ -364,7 +351,7 @@ func xxdEntry(_ context.Context, in *XxdArgs) (string, error) {
 		return "", errs.New(errs.KindInvalidInput, fmt.Sprintf("invalid offset: %d", in.Offset))
 	}
 
-	rc, err := openImageFileReader(in.Archive, in.Source, in.RepoTag, in.ImageIndex, in.Tag, in.Image)
+	rc, err := openImageFileReader(in.Archive, in.Source, in.RepoTag, in.ImageIndex, in.Tag, in.Index)
 	if err != nil {
 		return "", err
 	}
@@ -388,11 +375,11 @@ type ExtractArgs struct {
 	Archive    string `json:"archive" desc:"local path to an image archive or a disk image (qcow2/vmdk/vhd/vhdx/ova/vma) on this machine; may also be a glob pattern or a directory (top level scanned)" required:"true" cli:"positional"`
 	Output     string `json:"output" desc:"output parent directory (default: beside each input archive)" cli:"shorthand=o"`
 	Force      bool   `json:"force" desc:"force writing into an existing non-empty target directory" cli:"shorthand=f"`
-	BufferSize int    `json:"buffer_size" desc:"file copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
+	BufferSize int    `json:"buffer-size" desc:"copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
+	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
+	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
 }
 
 type ExtractResult struct {
@@ -406,7 +393,7 @@ func extractImages(ctx context.Context, in *ExtractArgs) ([]ExtractResult, error
 	if in.BufferSize <= 0 {
 		return nil, errs.New(errs.KindInvalidInput, fmt.Sprintf("invalid buffer size: %d", in.BufferSize))
 	}
-	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Image)
+	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Index)
 	if err != nil {
 		return nil, err
 	}
