@@ -4,33 +4,20 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
-## [Unreleased]
+## [v0.7.3] - 2026-09-28
 
 ### Added
 
-- The image selection flags are named for what they take: `--tag` (a name:
-  a full repo tag, `name:tag`, a repository name or a bare tag) and `--index`
-  (a position in the manifest), with `-t/--repo-tag` and `-i/--image-index`
-  kept as equivalent spellings. `--image`, which accepted both a number and a
-  name and so duplicated `--tag`, is gone; the long forms are hyphenated
-  (`--repo-tag`, `--image-index`, `--buffer-size`) everywhere, CLI, HTTP and
-  MCP alike.
-- `cat` accepts `-b/--buffer-size` like `cp` and `extract` do; the flag
-  descriptions for the image selection now say what actually works (a full
-  RepoTag, `name:tag`, a repository name or a bare tag) instead of naming only
-  `RepoTags`.
-- The help and both READMEs were corrected: the `info` output examples match
-  what is printed now, the example block is aligned at render time, the
-  supported-input list mentions cabs inside `.msi` and `.ppkg`, and the cache
-  location is stated in `--help` as well.
-
-- Selecting an image no longer requires the full repo tag. `--tag` (and
-  `-t`/`--repo-tag`, which resolve the same way) accepts any name an image is
-  listed under — a full repo tag, the tail of its path (`chatin/safeline-mgt:latest`),
-  `name:tag`, a repository name, or a bare tag — as long as it is unambiguous; a
-  name matching several images is refused with the list of candidates, so a
-  selection is never a guess. `--image` takes an index like `-i` and a name or
-  tag as well.
+- The image selection flags are named for what they take: `--tag` for a name —
+  a full repo tag, the tail of its path (`chaitin/safeline-mgt:latest`),
+  `name:tag`, a repository name, or a bare tag — and `--index` for a position
+  in the manifest. A name that matches several images is refused with the list
+  of candidates, so a selection is never a guess. `-t`/`--repo-tag` and
+  `-i`/`--image-index` are equivalent spellings; `--image`, which took both a
+  number and a name and so duplicated `--tag`, is gone. Long flags are
+  hyphenated everywhere — CLI, HTTP query parameters and MCP arguments alike.
+- `cat` accepts `-b/--buffer-size`, which `cp` and `extract` already had (so
+  the README's promise is now true).
 
 ### Changed
 
@@ -46,6 +33,14 @@ keep the newest version at the top.
   bound on Windows either. Deleting the directory by hand is always safe: every
   entry is rebuilt from its input, and scratch is removed by the run that made
   it.
+
+### Fixed
+
+- The help and both READMEs are corrected where they described flags or output
+  that do not exist: the `info` examples match what is printed now, the example
+  block is aligned at render time, the supported-input list mentions cabs
+  inside `.msi` and `.ppkg`, the flag descriptions say what the selection
+  actually accepts, and the cache location is stated in `--help`.
 
 ## [v0.7.2] - 2026-09-28
 
