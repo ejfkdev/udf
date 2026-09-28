@@ -262,6 +262,10 @@ Index  Image                          OS     Architecture  Created              
 layers take in the archive, and is empty when the archive's members were not
 indexed (an uncompressed or small archive).
 
+A disk image answers with a `disks` array (one entry per disk, with its
+volumes and filesystems) and a plain archive with a `plain` object (format,
+file count, total size); neither carries the image fields above.
+
 ### Cache and temporary files
 
 Everything udf derives lives in one per-user directory inside the system
