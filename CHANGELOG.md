@@ -8,6 +8,17 @@ keep the newest version at the top.
 
 ### Added
 
+- `cat` accepts `-b/--buffer_size` like `cp` and `extract` do; the flag
+  descriptions for the image selection now say what actually works (a full
+  RepoTag, `name:tag`, a repository name or a bare tag) instead of naming only
+  `RepoTags`.
+- The help and both READMEs were corrected where they named flags that do not
+  parse: the long forms are `--repo_tag`, `--image_index` and `--buffer_size`
+  (the CLI binds a field's JSON name verbatim, so the hyphenated spellings
+  never worked), the `info` output examples match what is printed now, the
+  example block is aligned, and the supported-input list mentions cabs inside
+  `.msi` and `.ppkg`. The cache location is now stated in `--help` as well.
+
 - Selecting an image no longer requires the full repo tag. `--tag` (and
   `-t`/`--repo-tag`, which resolve the same way) accepts any name an image is
   listed under — a full repo tag, the tail of its path (`chatin/safeline-mgt:latest`),

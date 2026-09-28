@@ -82,10 +82,10 @@ func toXyzErr(err error) error {
 
 type InfoArgs struct {
 	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by RepoTag from manifest.json, e.g. repo/app:latest" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag all work, as long as the name is unambiguous (info/ls/cp/cat/xxd/extract)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest"`
+	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
+	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
 }
 
 // ImageInfoResult is the detail of one selected image.
@@ -186,10 +186,10 @@ func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 type LsArgs struct {
 	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
 	Path       string `json:"path" desc:"path inside the image; / lists disks/volumes, e.g. /vg1/root or /vg1/root/etc" default:"/" cli:"positional"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by RepoTag from manifest.json, e.g. repo/app:latest" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag all work, as long as the name is unambiguous (info/ls/cp/cat/xxd/extract)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest"`
+	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
+	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
 }
 
 func listImage(_ context.Context, in *LsArgs) ([]image.FileEntry, error) {
@@ -227,10 +227,10 @@ type CpArgs struct {
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
 	Dest       string `json:"dest" desc:"destination path on this machine" required:"true" cli:"positional"`
 	BufferSize int    `json:"buffer_size" desc:"file copy buffer size in bytes" default:"1048576"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by RepoTag from manifest.json, e.g. repo/app:latest" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag all work, as long as the name is unambiguous (info/ls/cp/cat/xxd/extract)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest"`
+	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
+	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
 }
 
 type CpResult struct {
@@ -278,11 +278,11 @@ func copyEntry(_ context.Context, in *CpArgs) (*CpResult, error) {
 type CatArgs struct {
 	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/7z/rar/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
-	BufferSize int    `json:"buffer_size" desc:"copy buffer size in bytes" default:"1048576"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by RepoTag from manifest.json, e.g. repo/app:latest" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag all work, as long as the name is unambiguous (info/ls/cp/cat/xxd/extract)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest"`
+	BufferSize int    `json:"buffer_size" desc:"copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
+	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
+	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
 }
 
 // catEntry streams the raw bytes of one file straight to stdout so the result
@@ -346,10 +346,10 @@ type XxdArgs struct {
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
 	Bytes      int    `json:"bytes" desc:"number of bytes to dump" default:"256" cli:"shorthand=n"`
 	Offset     int    `json:"offset" desc:"skip this many bytes from the start of the file before dumping" default:"0" cli:"shorthand=s"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by RepoTag from manifest.json, e.g. repo/app:latest" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag all work, as long as the name is unambiguous (info/ls/cp/cat/xxd/extract)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest"`
+	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
+	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
 }
 
 // xxdEntry returns a bounded hex+ASCII dump of one in-image file, mirroring the
@@ -389,10 +389,10 @@ type ExtractArgs struct {
 	Output     string `json:"output" desc:"output parent directory (default: beside each input archive)" cli:"shorthand=o"`
 	Force      bool   `json:"force" desc:"force writing into an existing non-empty target directory" cli:"shorthand=f"`
 	BufferSize int    `json:"buffer_size" desc:"file copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
-	RepoTag    string `json:"repo_tag" desc:"select the image by RepoTag from manifest.json, e.g. repo/app:latest" cli:"shorthand=t"`
-	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array" default:"-1" cli:"shorthand=i"`
-	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag all work, as long as the name is unambiguous (info/ls/cp/cat/xxd/extract)"`
-	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest"`
+	RepoTag    string `json:"repo_tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image_index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --image with a number)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as -t/--repo_tag)"`
+	Image      string `json:"image" desc:"select the image by index, repository name or tag, e.g. 3, safeline-mgt or safeline-mgt:latest (same as -i/--image_index, plus names)"`
 }
 
 type ExtractResult struct {

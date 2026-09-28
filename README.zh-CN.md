@@ -129,7 +129,7 @@ curl -s http://127.0.0.1:8080/openapi.json
 ./udf mcp http --addr 127.0.0.1:9000 --bearer s3cret
 ```
 
-路由一览：`GET /info?archive=…`、`GET /ls?archive=…&path=…`、`POST /cp`、`GET /cat?archive=…&source=…`、`GET /xxd?archive=…&source=…`、`POST /extract`，另有 `/healthz` 与 `/openapi.json`。
+路由一览：`GET /info?archive=…`、`GET /ls?archive=…&path=…`、`POST /cp`、`GET /cat?archive=…&source=…`、`GET /xxd?archive=…&source=…`、`POST /extract`，另有 `/healthz` 与 `/openapi.json`。各路由接受与 CLI 相同的镜像选择参数（`tag=`、`image=`、`repo_tag=`、`image_index=`），例如 `?tag=safeline-mgt:latest`。
 
 在 MCP 客户端中，将 udf 注册为 stdio 服务：
 
@@ -369,7 +369,7 @@ archive      output_dir                     layers  error
 - `-i, --image_index`, `--image` — 按 `manifest.json` 数组中的索引选择镜像；`--image` 也接受名字或 tag（同上）
 - `-o, --output` — 输出父目录（`extract`）
 - `-f, --force` — 强制写入已存在的非空目标目录（`extract`）
-- `-b, --buffer-size` — 文件复制缓冲区大小，单位字节（`cp`、`extract`）
+- `-b, --buffer_size` — 复制缓冲区大小，单位字节（`cp`、`cat`、`extract`）
 - `-n, --bytes` — 要转储的字节数（`xxd`，默认 256）
 - `-s, --offset` — 从文件起始跳过多少字节再开始（`xxd`）
 

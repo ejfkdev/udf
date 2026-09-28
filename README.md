@@ -140,7 +140,7 @@ curl -s http://127.0.0.1:8080/openapi.json
 ./udf mcp http --addr 127.0.0.1:9000 --bearer s3cret
 ```
 
-Route overview: `GET /info?archive=…`, `GET /ls?archive=…&path=…`, `POST /cp`, `GET /cat?archive=…&source=…`, `GET /xxd?archive=…&source=…`, `POST /extract`, plus `/healthz` and `/openapi.json`.
+Route overview: `GET /info?archive=…`, `GET /ls?archive=…&path=…`, `POST /cp`, `GET /cat?archive=…&source=…`, `GET /xxd?archive=…&source=…`, `POST /extract`, plus `/healthz` and `/openapi.json`. Each route takes the same selection parameters as the CLI (`tag=`, `image=`, `repo_tag=`, `image_index=`), so `?tag=safeline-mgt:latest` works over HTTP too.
 
 In MCP clients, register udf as a stdio server:
 
@@ -392,7 +392,7 @@ Command flags:
 - `-i, --image_index`, `--image` — select the image by its index in the `manifest.json` array; `--image` also takes a name or tag (all commands)
 - `-o, --output` — output parent directory (`extract`)
 - `-f, --force` — write into an existing non-empty target directory (`extract`)
-- `-b, --buffer-size` — file copy buffer size in bytes (`cp`, `extract`)
+- `-b, --buffer_size` — copy buffer size in bytes (`cp`, `cat`, `extract`)
 - `-n, --bytes` — number of bytes to dump (`xxd`, default 256)
 - `-s, --offset` — skip this many bytes from the start before dumping (`xxd`)
 
