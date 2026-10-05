@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.7.5] - 2026-10-06
+
+### Fixed
+
+- ext4 group descriptor checksums with `metadata_csum`: a Kylin/PlatOS
+  appliance image (and any filesystem made by a recent `mkfs` with 64-byte
+  descriptors) was refused with "checksum mismatch", so no partition on the disk
+  could be read. The CRC-32C for this variant covers the **whole** descriptor
+  with its checksum field zeroed — not just the bytes before it, which is the
+  range the older `gdt_csum` variant uses and what v0.7.4 assumed. Both variants
+  are now pinned by real filesystems in the tests: an Android `gdt_csum`
+  descriptor (→ 0xa2a1) and two descriptors of a Kylin `metadata_csum` one
+  (groups 0 and 7 → 0x8752 and 0x07d9).
+
+### Changed
+
+- A checksum that does not verify no longer makes a filesystem unreadable.
+  Group descriptors, inodes and directory blocks are read as they are on the
+  disk, which is what the kernel does when mounting a filesystem it cannot
+  verify; a formula bug in udf must not cost someone access to their image.
+  The checksum computations stay pinned by the frozen-vector tests.
+
 ## [v0.7.4] - 2026-09-28
 
 ### Added

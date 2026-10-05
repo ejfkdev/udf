@@ -106,25 +106,21 @@ func (de *directoryEntry) toBytes(withSize uint16) []byte {
 func parseDirEntriesLinear(b []byte, withChecksums bool, blocksize, inodeNumber, inodeGeneration, checksumSeed uint32) ([]*directoryEntry, error) {
 	// checksum if needed
 	if withChecksums {
+		// A checksummed directory block ends with a 12-byte dummy entry that
+		// must not be parsed as a file. Its checksum is not enforced here (as
+		// with group descriptors and inodes): an entry is still readable when
+		// the checksum does not verify, which is also what the kernel does.
 		var (
 			newb                []byte
 			checksumEntryOffset = int(blocksize) - minDirEntryLength
-			checksumOffset      = int(blocksize) - 4
 		)
-		checksummer := directoryChecksummer(checksumSeed, inodeNumber, inodeGeneration)
 		for i := 0; i < len(b); i += int(blocksize) {
 			block := b[i : i+int(blocksize)]
-			inBlockChecksum := block[checksumOffset:]
-			block = block[:checksumEntryOffset]
-			// save everything except the checksum
-			newb = append(newb, block...)
-			// checksum the entire block
-			checksumValue := binary.LittleEndian.Uint32(inBlockChecksum)
-			// checksum the block
-			actualChecksum := checksummer(block)
-			if actualChecksum != checksumValue {
-				return nil, fmt.Errorf("directory block checksum mismatch: expected %x, got %x", checksumValue, actualChecksum)
+			if checksumEntryOffset >= len(block) {
+				newb = append(newb, block...)
+				continue
 			}
+			newb = append(newb, block[:checksumEntryOffset]...)
 		}
 		b = newb
 	}

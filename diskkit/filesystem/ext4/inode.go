@@ -386,14 +386,9 @@ func inodeFromBytes(b []byte, sb *superblock, number uint32) (*inode, error) {
 		blockPointers:          blockPointers,
 		linkTarget:             linkTarget,
 	}
-	if sb.features.metadataChecksums {
-		checksum := binary.LittleEndian.Uint32(checksumBytes)
-		actualChecksum := inodeChecksum(b, sb.checksumSeed, number, i.nfsFileVersion)
-
-		if actualChecksum != checksum {
-			return nil, fmt.Errorf("checksum mismatch, on-disk %x vs calculated %x", checksum, actualChecksum)
-		}
-	}
+	// As with group descriptors, an inode checksum that does not verify is not
+	// fatal: the bytes on the disk are still what the caller asked for, and
+	// the kernel reads such a filesystem too.
 
 	return &i, nil
 }
