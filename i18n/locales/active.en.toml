@@ -228,3 +228,18 @@ other = "./udf cp -t repo/app:latest ./image.tar /app/config ./config"
 
 [example_cp_4]
 other = "./udf cp ./image.tar / ./rootfs"
+
+[err_platform_not_found]
+other = "no image matches platform \"{{.Platform}}\"; the archive holds: {{.Available}}"
+
+[err_platform_ambiguous]
+other = "platform \"{{.Platform}}\" matches more than one image: {{.Available}} — add a variant (os/arch/variant)"
+
+[err_platform_invalid]
+other = "platform \"{{.Platform}}\" is not in os/arch[/variant] form, e.g. linux/arm64"
+
+[err_platform_with_index]
+other = "use only one of --platform ({{.Platform}}) or --index (a number)"
+
+[err_platform_tag_mismatch]
+other = "no image is both {{.Tag}} and {{.Platform}}; the archive holds: {{.Available}}"

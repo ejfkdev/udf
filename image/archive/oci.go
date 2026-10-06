@@ -2,6 +2,8 @@ package archive
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -119,48 +121,104 @@ func openOCITar(path, compression string) (Archive, error) {
 }
 
 // openOCIAgainst parses index.json and builds the synthesized manifest.json.
+// Every image the index (and any manifest list inside it) names becomes one
+// entry, so an OCI layout with several platforms or tags lists the way a
+// docker-save archive does, and --tag/--index/--platform select among them.
 func openOCIAgainst(store ociStore) (Archive, error) {
-	manifest, repoTag, err := readOCIManifest(store)
+	index, err := store.readJSON("index.json")
 	if err != nil {
 		return nil, err
 	}
-	configDigest := manifestValueString(manifest, "config", "digest")
-	layerDigests := manifestValueStrings(manifest, "layers", "digest")
 
-	item := types.ManifestItem{
-		Config:   configDigest,
-		RepoTags: []string{repoTag},
-		Layers:   layerDigests,
+	// A single-image layout has index.json itself as the manifest; its digest
+	// is over those bytes, not over a re-marshalled copy.
+	topDigest := ""
+	if !types.IsIndexMediaType(manifestValueString(index, "", "mediaType")) {
+		if raw, err := store.readBytes("index.json"); err == nil {
+			sum := sha256.Sum256(raw)
+			topDigest = "sha256:" + hex.EncodeToString(sum[:])
+		}
 	}
-	manifestJSON, err := json.Marshal([]types.ManifestItem{item})
+	items, err := ociManifestItems(store, index, manifestAnnotationsTag(index), topDigest, 0, map[string]bool{})
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("OCI index names no image manifests")
+	}
+	manifestJSON, err := json.Marshal(items)
 	if err != nil {
 		return nil, err
 	}
 	return &ociArchive{store: store, manifestJSON: manifestJSON}, nil
 }
 
-// readOCIManifest resolves index.json to the image manifest plus its tag.
-func readOCIManifest(store ociStore) (map[string]any, string, error) {
-	index, err := store.readJSON("index.json")
-	if err != nil {
-		return nil, "", err
+// ociManifestItems walks an index or a manifest list, collecting one item per
+// image manifest. Nested indexes (a manifest list referenced from index.json)
+// are followed, with a depth bound and a seen set so a malformed layout cannot
+// loop.
+func ociManifestItems(store ociStore, node map[string]any, tag, digest string, depth int, seen map[string]bool) ([]types.ManifestItem, error) {
+	if depth > 4 {
+		return nil, fmt.Errorf("OCI index nesting is too deep")
+	}
+	mediaType := manifestValueString(node, "", "mediaType")
+
+	// An index or manifest list: walk its manifests.
+	if mediaType == types.MediaTypeOCIIndex || mediaType == types.MediaTypeDockerManifestList {
+		manifests, _ := node["manifests"].([]any)
+		var out []types.ManifestItem
+		for _, entry := range manifests {
+			desc, _ := entry.(map[string]any)
+			if desc == nil {
+				continue
+			}
+			digest := manifestValueString(desc, "", "digest")
+			if digest == "" || seen[digest] {
+				continue
+			}
+			seen[digest] = true
+			child, err := store.readJSON(ociBlobPath(digest))
+			if err != nil {
+				continue
+			}
+			childTag := manifestAnnotationsTag(desc)
+			if childTag == "<untagged>" {
+				childTag = tag
+			}
+			items, err := ociManifestItems(store, child, childTag, digest, depth+1, seen)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, items...)
+		}
+		return out, nil
 	}
 
-	if manifestValueString(index, "", "mediaType") == "application/vnd.oci.image.index.v1+json" {
-		manifests, _ := index["manifests"].([]any)
-		if len(manifests) == 0 {
-			return nil, "", fmt.Errorf("OCI index has no manifests")
+	// An image manifest: one item, with the layer media types and the digest of
+	// the manifest itself (sha256 over its raw bytes).
+	configDigest := manifestValueString(node, "config", "digest")
+	layers, _ := node["layers"].([]any)
+	layerDigests := make([]string, 0, len(layers))
+	layerTypes := make([]string, 0, len(layers))
+	for _, entry := range layers {
+		layer, _ := entry.(map[string]any)
+		if layer == nil {
+			continue
 		}
-		first, _ := manifests[0].(map[string]any)
-		digest := manifestValueString(first, "", "digest")
-		repoTag := manifestAnnotationsTag(first)
-		if manifest, err := store.readJSON(ociBlobPath(digest)); err == nil {
-			return manifest, repoTag, nil
-		}
+		layerDigests = append(layerDigests, manifestValueString(layer, "", "digest"))
+		layerTypes = append(layerTypes, manifestValueString(layer, "", "mediaType"))
 	}
-
-	// index.json is itself the image manifest.
-	return index, manifestAnnotationsTag(index), nil
+	if configDigest == "" && len(layerDigests) == 0 {
+		// Not an image manifest at all (a bare descriptor, say): nothing to add.
+		return nil, nil
+	}
+	return []types.ManifestItem{{
+		Config:          configDigest,
+		RepoTags:        []string{tag},
+		Layers:          layerDigests,
+		LayerMediaTypes: layerTypes,
+		ManifestDigest:  digest,
+	}}, nil
 }
 
 func manifestAnnotationsTag(m map[string]any) string {

@@ -97,6 +97,17 @@ English version: [README.md](./README.md)
 ./udf cp ./app.apk resources.arsc ./res.txt      # 编译后的资源表，解码为文本
 ```
 
+一个归档里有多个镜像（或同一镜像的多个平台）时，用 `--tag` / `--index` /
+`--platform` 任选其一；`verify` 会重算 config、manifest 与每一层的摘要：
+
+```text
+./udf info ./images.tar.gz                       # 每镜像一行：os、arch、variant、层数
+./udf ls --platform linux/arm64 ./multi.tar /etc
+./udf cp --tag app:1.2 --platform linux/amd64 ./multi.tar /etc/hosts ./hosts
+./udf verify ./images.tar.gz                     # config/manifest/层摘要，并指出缺了什么
+./udf verify --fast ./images.tar.gz              # 只检查每层是否都在
+```
+
 支持的磁盘容器格式：
 
 - **qcow2**（v2/v3），只读流式

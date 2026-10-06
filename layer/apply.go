@@ -5,8 +5,11 @@ import (
 	"bufio"
 	"compress/bzip2"
 	"fmt"
-	"github.com/klauspost/compress/gzip"
 	"io"
+
+	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/zstd"
+	"github.com/ulikunitz/xz"
 
 	"github.com/ejfkdev/udf/fsutil"
 )
@@ -93,7 +96,23 @@ func OpenLayerReader(r io.Reader) (io.Reader, func(), error) {
 	}
 
 	if len(header) >= 4 && header[0] == 0x28 && header[1] == 0xB5 && header[2] == 0x2F && header[3] == 0xFD {
-		return nil, func() {}, fmt.Errorf("unsupported zstd-compressed layer")
+		// OCI layers are also stored zstd-compressed (containerd and nerdctl
+		// write them with --compression zstd). Concatenated frames — the
+		// zstd-chunked layout — decode the same way; a TOC left inside the tar
+		// is harmless.
+		zr, err := zstd.NewReader(br)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("open zstd layer: %w", err)
+		}
+		return zr, func() { zr.Close() }, nil
+	}
+
+	if len(header) >= 6 && header[0] == 0xFD && header[1] == 0x37 && header[2] == 0x7A && header[3] == 0x58 && header[4] == 0x5A && header[5] == 0x00 {
+		xr, err := xz.NewReader(br)
+		if err != nil {
+			return nil, func() {}, fmt.Errorf("open xz layer: %w", err)
+		}
+		return xr, func() {}, nil
 	}
 
 	return br, func() {}, nil

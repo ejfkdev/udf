@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,7 +25,7 @@ import (
 // repository name or a bare tag, resolved by the image side — and --index
 // (spelled -i or --image-index) takes its number. Exactly one of the two may
 // be given, since an archive's images are picked by name or by position.
-func selectionFor(repoTag string, imageIndex int, tag string, index int) (image.Selection, error) {
+func selectionFor(repoTag string, imageIndex int, tag string, index int, platform string) (image.Selection, error) {
 	sel := image.Selection{ImageIndex: -1}
 	if name := strings.TrimSpace(repoTag); name != "" {
 		sel.RepoTag = name
@@ -37,10 +38,22 @@ func selectionFor(repoTag string, imageIndex int, tag string, index int) (image.
 	} else if imageIndex >= 0 {
 		sel.ImageIndex = imageIndex
 	}
+	if p := strings.TrimSpace(platform); p != "" {
+		sel.Platform = p
+	}
 	if sel.RepoTag != "" && sel.ImageIndex >= 0 {
 		return image.Selection{}, errs.New(errs.KindInvalidInput, "use only one of --tag (a name) or --index (a number)")
 	}
+	if sel.Platform != "" && sel.ImageIndex >= 0 {
+		return image.Selection{}, errs.New(errs.KindInvalidInput, "use only one of --platform (os/arch[/variant]) or --index (a number)")
+	}
 	return sel, nil
+}
+
+// selectionOf builds the selection from whichever of the six selection fields
+// an Args struct carries; every command uses the same three options.
+func selectionOf(repoTag string, imageIndex int, tag string, index int, platform string) (image.Selection, error) {
+	return selectionFor(repoTag, imageIndex, tag, index, platform)
 }
 
 // toXyzErr translates library errors into the xyz error taxonomy so that the
@@ -73,6 +86,7 @@ type InfoArgs struct {
 	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
 	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
 	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
+	Platform   string `json:"platform" desc:"select the image by platform, e.g. linux/arm64 or linux/arm/v7 (matches the config's os/architecture/variant)"`
 }
 
 // ImageInfoResult is the detail of one selected image.
@@ -83,6 +97,8 @@ type ImageInfoResult struct {
 	ConfigPath    string   `json:"config_path"`
 	OS            string   `json:"os,omitempty"`
 	Architecture  string   `json:"architecture,omitempty"`
+	Variant       string   `json:"variant,omitempty"`
+	Platform      string   `json:"platform,omitempty"`
 	Created       string   `json:"created,omitempty"`
 	DockerVersion string   `json:"docker_version,omitempty"`
 	WorkingDir    string   `json:"working_dir,omitempty"`
@@ -91,6 +107,16 @@ type ImageInfoResult struct {
 	LayerCount    int      `json:"layer_count"`
 	Size          string   `json:"size,omitempty"`
 	Layers        []string `json:"layers"`
+
+	// ManifestDigest is "sha256:…" of the raw image manifest when the format
+	// records one (OCI layouts and archives).
+	ManifestDigest string `json:"manifest_digest,omitempty"`
+	// LayerMediaTypes lists the distinct layer media types the manifest names
+	// (OCI); a classic docker save records none.
+	LayerMediaTypes []string `json:"layer_media_types,omitempty"`
+	// NonDistributableLayers counts the layers whose content lives at the
+	// vendor and is therefore not part of the archive.
+	NonDistributableLayers int `json:"non_distributable_layers,omitempty"`
 }
 
 // InfoResult answers for the inputs that are not a single image: disk images
@@ -125,7 +151,7 @@ func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 		return &InfoResult{Plain: info}, nil
 	}
 
-	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Index)
+	sel, err := selectionOf(in.RepoTag, in.ImageIndex, in.Tag, in.Index, in.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +159,7 @@ func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 	// No image selected: an archive holding several images is answered with a
 	// listing of them, since which one the caller wants is exactly what is
 	// missing — the detail of any one image is one -t/-i away.
-	if sel.RepoTag == "" && sel.ImageIndex < 0 {
+	if sel.RepoTag == "" && sel.ImageIndex < 0 && sel.Platform == "" {
 		summaries, err := image.ScanImageSummaries(in.Archive)
 		if err == nil && len(summaries) > 1 {
 			return summaries, nil
@@ -146,12 +172,13 @@ func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 	}
 
 	resp := &ImageInfoResult{
-		Index:       meta.Index,
-		TotalImages: meta.Total,
-		RepoTags:    meta.RepoTags,
-		ConfigPath:  meta.ConfigPath,
-		LayerCount:  len(meta.LayerOrder),
-		Layers:      meta.LayerOrder,
+		Index:          meta.Index,
+		TotalImages:    meta.Total,
+		RepoTags:       meta.RepoTags,
+		ConfigPath:     meta.ConfigPath,
+		LayerCount:     len(meta.LayerOrder),
+		Layers:         meta.LayerOrder,
+		ManifestDigest: meta.ManifestDigest,
 	}
 	if meta.StoredSize > 0 {
 		resp.Size = image.HumanBytes(meta.StoredSize)
@@ -159,13 +186,37 @@ func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 	if meta.Config != nil {
 		resp.OS = meta.Config.OS
 		resp.Architecture = meta.Config.Architecture
+		resp.Variant = meta.Config.Variant
+		resp.Platform = meta.Config.Platform()
 		resp.Created = meta.Config.Created
 		resp.DockerVersion = meta.Config.DockerVersion
 		resp.WorkingDir = meta.Config.Config.WorkingDir
 		resp.Entrypoint = meta.Config.Config.Entrypoint
 		resp.Cmd = meta.Config.Config.Cmd
 	}
+	for i := range meta.LayerOrder {
+		if meta.NonDistributableLayer(i) {
+			resp.NonDistributableLayers++
+		}
+	}
+	resp.LayerMediaTypes = distinctSorted(meta.LayerMediaTypes)
 	return resp, nil
+}
+
+// distinctSorted returns the non-empty values of in, deduplicated and sorted,
+// so an image with twenty gzip layers names its media type once.
+func distinctSorted(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, v := range in {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ---- ls ----
@@ -177,6 +228,7 @@ type LsArgs struct {
 	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
 	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
 	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
+	Platform   string `json:"platform" desc:"select the image by platform, e.g. linux/arm64 or linux/arm/v7 (matches the config's os/architecture/variant)"`
 }
 
 func listImage(_ context.Context, in *LsArgs) ([]image.FileEntry, error) {
@@ -195,7 +247,7 @@ func listImage(_ context.Context, in *LsArgs) ([]image.FileEntry, error) {
 		return entries, nil
 	}
 
-	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Index)
+	sel, err := selectionOf(in.RepoTag, in.ImageIndex, in.Tag, in.Index, in.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +270,7 @@ type CpArgs struct {
 	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
 	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
 	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
+	Platform   string `json:"platform" desc:"select the image by platform, e.g. linux/arm64 or linux/arm/v7 (matches the config's os/architecture/variant)"`
 }
 
 type CpResult struct {
@@ -244,7 +297,7 @@ func copyEntry(_ context.Context, in *CpArgs) (*CpResult, error) {
 		}
 		return &CpResult{Source: in.Source, Dest: in.Dest, Extracted: count}, nil
 	}
-	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Index)
+	sel, err := selectionOf(in.RepoTag, in.ImageIndex, in.Tag, in.Index, in.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -270,6 +323,7 @@ type CatArgs struct {
 	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
 	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
 	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
+	Platform   string `json:"platform" desc:"select the image by platform, e.g. linux/arm64 or linux/arm/v7 (matches the config's os/architecture/variant)"`
 }
 
 // catEntry streams the raw bytes of one file straight to stdout so the result
@@ -281,7 +335,7 @@ func catEntry(_ context.Context, in *CatArgs) (any, error) {
 		return nil, errs.New(errs.KindInvalidInput, fmt.Sprintf("invalid buffer size: %d", in.BufferSize))
 	}
 
-	rc, err := openImageFileReader(in.Archive, in.Source, in.RepoTag, in.ImageIndex, in.Tag, in.Index)
+	rc, err := openImageFileReader(in.Archive, in.Source, in.RepoTag, in.ImageIndex, in.Tag, in.Index, in.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +349,7 @@ func catEntry(_ context.Context, in *CatArgs) (any, error) {
 
 // openImageFileReader resolves one in-image path and returns a reader over its
 // bytes, routing disk images and archives the same way cp and cat do.
-func openImageFileReader(archive, source, repoTag string, imageIndex int, tag string, index int) (io.ReadCloser, error) {
+func openImageFileReader(archive, source, repoTag string, imageIndex int, tag string, index int, platform string) (io.ReadCloser, error) {
 	switch image.ClassifyInput(archive) {
 	case "disk":
 		rc, _, err := image.ReadDiskFile(archive, source)
@@ -311,7 +365,7 @@ func openImageFileReader(archive, source, repoTag string, imageIndex int, tag st
 		return rc, nil
 	}
 
-	sel, err := selectionFor(repoTag, imageIndex, tag, index)
+	sel, err := selectionOf(repoTag, imageIndex, tag, index, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -337,6 +391,7 @@ type XxdArgs struct {
 	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
 	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
 	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
+	Platform   string `json:"platform" desc:"select the image by platform, e.g. linux/arm64 or linux/arm/v7 (matches the config's os/architecture/variant)"`
 }
 
 // xxdEntry returns a bounded hex+ASCII dump of one in-image file, mirroring the
@@ -351,7 +406,7 @@ func xxdEntry(_ context.Context, in *XxdArgs) (string, error) {
 		return "", errs.New(errs.KindInvalidInput, fmt.Sprintf("invalid offset: %d", in.Offset))
 	}
 
-	rc, err := openImageFileReader(in.Archive, in.Source, in.RepoTag, in.ImageIndex, in.Tag, in.Index)
+	rc, err := openImageFileReader(in.Archive, in.Source, in.RepoTag, in.ImageIndex, in.Tag, in.Index, in.Platform)
 	if err != nil {
 		return "", err
 	}
@@ -380,6 +435,7 @@ type ExtractArgs struct {
 	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
 	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
 	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
+	Platform   string `json:"platform" desc:"select the image by platform, e.g. linux/arm64 or linux/arm/v7 (matches the config's os/architecture/variant)"`
 }
 
 type ExtractResult struct {
@@ -393,7 +449,7 @@ func extractImages(ctx context.Context, in *ExtractArgs) ([]ExtractResult, error
 	if in.BufferSize <= 0 {
 		return nil, errs.New(errs.KindInvalidInput, fmt.Sprintf("invalid buffer size: %d", in.BufferSize))
 	}
-	sel, err := selectionFor(in.RepoTag, in.ImageIndex, in.Tag, in.Index)
+	sel, err := selectionOf(in.RepoTag, in.ImageIndex, in.Tag, in.Index, in.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -549,4 +605,38 @@ func extractPlainOne(p, outputDir string, force bool, bufferSize int) (ExtractRe
 		return ExtractResult{}, toXyzErr(err)
 	}
 	return ExtractResult{Archive: p, OutputDir: target, Layers: 1}, nil
+}
+
+// VerifyArgs selects what to check: the whole archive, or one image by tag,
+// index or platform.
+type VerifyArgs struct {
+	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip) or an OCI layout directory; no files are uploaded" required:"true" cli:"positional"`
+	Fast       bool   `json:"fast" desc:"only check that every layer is present, without recomputing digests" cli:"shorthand=f"`
+	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
+	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
+	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
+	Index      int    `json:"index" desc:"select the image by its index in the manifest.json array, e.g. 3 (the preferred spelling of -i/--image-index)" default:"-1"`
+	Platform   string `json:"platform" desc:"select the image by platform, e.g. linux/arm64 or linux/arm/v7 (matches the config's os/architecture/variant)"`
+}
+
+// verifyArchive checks digests and reports the result; images that fail any
+// check are named in a summary error so the exit code reflects them.
+func verifyArchive(_ context.Context, in *VerifyArgs) ([]image.VerifyResult, error) {
+	if image.ClassifyInput(in.Archive) != "image" {
+		return nil, errs.New(errs.KindInvalidInput,
+			"verify checks docker-save archives, OCI layouts and OCI image archives; this input is neither")
+	}
+	sel, err := selectionOf(in.RepoTag, in.ImageIndex, in.Tag, in.Index, in.Platform)
+	if err != nil {
+		return nil, err
+	}
+	results, err := image.VerifyImages(in.Archive, sel, in.Fast)
+	if err != nil {
+		return nil, toXyzErr(err)
+	}
+	if failed := image.VerifyFailures(results); failed > 0 {
+		return results, errs.New(errs.KindInternal,
+			fmt.Sprintf("%d of %d image(s) failed verification; see the checks column", failed, len(results)))
+	}
+	return results, nil
 }

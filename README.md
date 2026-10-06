@@ -102,6 +102,18 @@ unpacked in turn), an emulator or device `system.img` — a GPT disk whose
 ./udf cp ./app.apk resources.arsc ./res.txt    # the compiled resource table, decoded
 ```
 
+An archive holding several images (or several platforms of one image) is picked
+from with `--tag`, `--index` or `--platform`, and `verify` recomputes the
+digests of the config, the manifest and every layer:
+
+```text
+./udf info ./images.tar.gz                     # one line per image: os, arch, variant, layers
+./udf ls --platform linux/arm64 ./multi.tar /etc
+./udf cp --tag app:1.2 --platform linux/amd64 ./multi.tar /etc/hosts ./hosts
+./udf verify ./images.tar.gz                   # config/manifest/layer digests, and what is missing
+./udf verify --fast ./images.tar.gz            # only check that every layer is present
+```
+
 Supported disk container formats:
 
 - **qcow2** (v2/v3), read-only and streamed

@@ -4,6 +4,58 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.7.7] - 2026-10-06
+
+### Added
+
+- `udf verify` checks an archive's digests: the config against the digest its
+  name records, each layer against the uncompressed digest the config lists
+  (`rootfs.diff_ids` — the one thing both docker-save and OCI archives record),
+  and, for OCI archives, the manifest against the digest the index names. A
+  truncated or tampered layer fails with the digest it actually has; a
+  non-distributable (foreign) layer is reported as skipped rather than failed,
+  because an archive is not supposed to carry it; `--fast` only checks that
+  every layer is present. Failures produce a non-zero exit and are named in the
+  summary.
+- `--platform` (with `--tag`, `--index`) selects an image by
+  `os/arch[/variant]` — the spelling docker and OCI use — for every command
+  that takes a selection. A value without a variant matches any variant, an
+  ambiguous match lists the candidates instead of guessing, and a platform
+  given together with an index is refused. On an archive holding several
+  platforms of one tag, `--tag app:1.2 --platform linux/arm64` now picks the
+  right one.
+- An OCI layout whose `index.json` names several manifests now lists every one
+  of them (with the tag from each descriptor's annotation), and a manifest list
+  referenced from the index is followed, so multi-platform OCI layouts behave
+  like docker-save archives: `info` lists the images, and the selection flags
+  work across them. Previously only `manifests[0]` was read and the rest were
+  dropped silently.
+- `info` reports what the manifest records: `manifest_digest`, the distinct
+  `layer_media_types` (so a zstd or foreign layer is visible), the count of
+  `non_distributable_layers`, and `platform`/`variant` alongside os and
+  architecture. A Docker schema 1 manifest (`fsLayers`, no diff ids) is now
+  refused with a message that says so, instead of listing an image with no
+  layers.
+
+### Fixed
+
+- zstd-compressed OCI layers (`application/vnd.oci.image.layer.v1.tar+zstd`,
+  what containerd and nerdctl write with `--compression zstd`) failed to open
+  with "unsupported zstd-compressed layer", so such an image could not be
+  listed or extracted at all. Layers now decode by magic — gzip, zstd, xz or
+  plain tar — regardless of what the archive calls them.
+- A layer whose content is not in the archive because it is non-distributable
+  reported "entry not found", which reads like a corrupt archive; it now says
+  the layer is foreign and why.
+
+### Changed
+
+- The layer merge is checked against fixtures from another project
+  (go-containerregistry's whiteout, whiteout-directory and overwritten-file
+  archives, Apache-2.0, with attribution): the same archives its tests assert
+  on now run through `udf ls`/`cp`, so the semantics are pinned to bytes udf
+  did not produce.
+
 ## [v0.7.6] - 2026-10-06
 
 ### Fixed

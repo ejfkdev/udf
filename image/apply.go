@@ -152,6 +152,9 @@ func applyImagePerLayer(imageTarPath string, meta *types.ImageMetadata, outputDi
 		} else {
 			var raw io.ReadCloser
 			raw, _, err = archive.Open(layerName)
+			if err != nil {
+				return layerOpenError(meta, layerName, err)
+			}
 			if err == nil {
 				rc, closeFn = raw, func() { _ = raw.Close() }
 			}

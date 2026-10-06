@@ -48,7 +48,7 @@ func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.No
 		}
 		rc, _, err := archive.Open(layerName)
 		if err != nil {
-			return nil, func() {}, err
+			return nil, func() {}, layerOpenError(meta, layerName, err)
 		}
 		return layer.OpenLayerReader(rc)
 	}

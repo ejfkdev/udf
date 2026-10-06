@@ -43,6 +43,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 			{"udf xxd ./image.tar /etc/passwd", "以十六进制预览文件头"},
 			{"udf ls ./boot.img", "安卓 boot 镜像：内核/ramdisk 及 ramdisk 内文件"},
 			{"udf ls ./system.img p2/system", "安卓动态分区：GPT 磁盘内 super 里的 system"},
+			{"udf verify ./image.tar", "校验归档内镜像的 config/manifest/层摘要"},
+			{"udf ls --platform linux/arm64 ./multi.tar", "多平台镜像：按平台选择"},
 			{"udf ls ./app.exe", "py2exe：PE 资源（PYTHONSCRIPT 为 .pyc）+ 附加模块归档"},
 			{"udf ls ./disk.qcow2", "磁盘镜像：列出分区/逻辑卷"},
 			{"udf cp ./disk.qcow2 /p1/etc/hostname .", "从磁盘镜像提取单个文件"},
@@ -70,6 +72,7 @@ var helpTextsByLang = map[langx.Language]helpTexts{
   --xyz.lang         界面语言: en | zh-CN（默认自动检测 LANG/LC_ALL）
   serve 与 mcp(http/sse) 支持 --addr、--bearer、--cors、--tls-cert/--tls-key、--timeout、--log-level
   mcp 另有 --versions、--session-timeout；全局等价写法 --xyz.<参数>（详见 xyz-go 文档）
+  选择镜像: --tag（名字，可写短名）/ --index（序号）/ --platform（os/arch[/variant]），三者取一
   缓存与临时文件: <系统临时目录>/ejfkdev/udf（UDF_CACHE_DIR 可改；随时可删，都会按需重建）`,
 		extractAfter: `extract 是默认命令，可省略子命令：
   udf ./image.tar         等同  udf extract ./image.tar
@@ -93,6 +96,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 			{"udf xxd ./image.tar /etc/passwd", "hex-dump a file header"},
 			{"udf ls ./boot.img", "Android boot image: kernel/ramdisk and the ramdisk's files"},
 			{"udf ls ./system.img p2/system", "Android dynamic partitions: system inside a GPT disk's super"},
+			{"udf verify ./image.tar", "check the digests of every image in an archive"},
+			{"udf ls --platform linux/arm64 ./multi.tar", "several platforms: pick one by platform"},
 			{"udf ls ./app.exe", "py2exe: PE resources (PYTHONSCRIPT as .pyc) + appended module archive"},
 			{"udf ls ./disk.qcow2", "disk image: list partitions / logical volumes"},
 			{"udf cp ./disk.qcow2 /p1/etc/hostname .", "extract a single file from a disk image"},
@@ -122,6 +127,7 @@ var helpTextsByLang = map[langx.Language]helpTexts{
   --xyz.lang         interface language: en | zh-CN (default: auto-detect LANG/LC_ALL)
   serve and mcp(http/sse) accept --addr, --bearer, --cors, --tls-cert/--tls-key, --timeout, --log-level
   mcp also accepts --versions, --session-timeout; global equivalent: --xyz.<param> (see the xyz-go docs)
+  pick an image: --tag (a name, a short one works) / --index (a number) / --platform (os/arch[/variant]) - use one
   cache and scratch: <system temp dir>/ejfkdev/udf (UDF_CACHE_DIR overrides; safe to delete, everything is rebuilt on demand)`,
 		extractAfter: `extract is the default command and may be omitted:
   udf ./image.tar         same as  udf extract ./image.tar

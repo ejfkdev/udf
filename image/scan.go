@@ -1,6 +1,7 @@
 package image
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,10 +17,14 @@ import (
 type Selection struct {
 	ImageIndex int
 	RepoTag    string
+	// Platform selects by "os/arch[/variant]" — the spelling docker and OCI
+	// use — among the images the archive holds. Combining it with a tag
+	// narrows that tag's images; combining it with an index is refused.
+	Platform string
 }
 
 func ScanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata, error) {
-	key := cacheKeyFor(imageTarPath, "imgmeta", fmt.Sprintf("%d\x00%s", sel.ImageIndex, sel.RepoTag))
+	key := cacheKeyFor(imageTarPath, "imgmeta", fmt.Sprintf("%d\x00%s\x00%s", sel.ImageIndex, sel.RepoTag, sel.Platform))
 	var cached types.ImageMetadata
 	if loadCachedJSON(key, &cached) {
 		return &cached, nil
@@ -32,6 +37,11 @@ func ScanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata
 	storeCachedJSON(key, meta)
 	return meta, nil
 }
+
+// errPlatformNeedsPath is internal: resolveSelection has no archive path and
+// so cannot look up per-image platforms; callers that have one resolve a
+// platform selection first (see resolvePlatformSelection).
+var errPlatformNeedsPath = errors.New("platform selection needs the archive path")
 
 // errIndexRead marks a failure to read a member through the index — a stale or
 // damaged index, or a member the index does not know. Only this warrants
@@ -66,7 +76,7 @@ func scanImageMetadataIndexed(imageTarPath string, r *gzipidx.Reader, sel Select
 	if manifestBytes == nil {
 		return nil, fmt.Errorf("manifest.json not found")
 	}
-	manifest, imageIndex, err := parseManifest(manifestBytes, sel)
+	manifest, imageIndex, err := parseManifest(manifestBytes, sel, imageTarPath)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +126,7 @@ func scanImageMetadataSequential(imageTarPath string, sel Selection) (*types.Ima
 	if err != nil {
 		return nil, fmt.Errorf("manifest.json not found")
 	}
-	manifest, imageIndex, err := parseManifest(data, sel)
+	manifest, imageIndex, err := parseManifest(data, sel, imageTarPath)
 	if err != nil {
 		return nil, err
 	}
@@ -136,11 +146,26 @@ func scanImageMetadataSequential(imageTarPath string, sel Selection) (*types.Ima
 	return meta, nil
 }
 
-// parseManifest decodes manifest.json and resolves the requested image.
-func parseManifest(data []byte, sel Selection) ([]types.ManifestItem, int, error) {
+// parseManifest decodes manifest.json and resolves the requested image. A
+// --platform selection is resolved first, because it needs the archive path (to
+// read the configs) rather than the manifest alone.
+func parseManifest(data []byte, sel Selection, imageTarPath string) ([]types.ManifestItem, int, error) {
+	// A Docker schema 1 manifest lists fsLayers instead of layers with digests,
+	// and its layers carry no diff ids to verify: say so plainly rather than
+	// listing an image with no layers.
+	if bytes.Contains(data, []byte("\"fsLayers\"")) && !bytes.Contains(data, []byte("\"Layers\"")) {
+		return nil, 0, fmt.Errorf("this is a Docker schema 1 image, which is not supported: re-save it with a current docker (docker save --format oci) or podman")
+	}
 	var manifest []types.ManifestItem
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return nil, 0, fmt.Errorf("parse manifest.json: %w", err)
+	}
+	if sel.Platform != "" {
+		imageIndex, err := resolvePlatformSelection(imageTarPath, manifest, sel)
+		if err != nil {
+			return nil, 0, err
+		}
+		return manifest, imageIndex, nil
 	}
 	imageIndex, err := resolveSelection(manifest, sel)
 	if err != nil {
@@ -153,11 +178,13 @@ func parseManifest(data []byte, sel Selection) ([]types.ManifestItem, int, error
 // selected image's config bytes.
 func buildImageMetadata(manifest []types.ManifestItem, imageIndex int, item types.ManifestItem, configBytes []byte) (*types.ImageMetadata, error) {
 	meta := &types.ImageMetadata{
-		Index:      imageIndex,
-		Total:      len(manifest),
-		RepoTags:   append([]string(nil), item.RepoTags...),
-		ConfigPath: item.Config,
-		LayerOrder: append([]string(nil), item.Layers...),
+		Index:           imageIndex,
+		Total:           len(manifest),
+		RepoTags:        append([]string(nil), item.RepoTags...),
+		ConfigPath:      item.Config,
+		LayerOrder:      append([]string(nil), item.Layers...),
+		LayerMediaTypes: append([]string(nil), item.LayerMediaTypes...),
+		ManifestDigest:  item.ManifestDigest,
 	}
 	if len(configBytes) == 0 {
 		return meta, nil
@@ -183,6 +210,10 @@ func resolveSelection(manifest []types.ManifestItem, sel Selection) (int, error)
 		return 0, appi18n.NewError("err_manifest_empty", nil, nil)
 	}
 
+	if sel.Platform != "" {
+		return 0, errPlatformNeedsPath
+	}
+
 	if sel.RepoTag != "" {
 		return matchImageTag(manifest, sel.RepoTag)
 	}
@@ -204,6 +235,122 @@ func resolveSelection(manifest []types.ManifestItem, sel Selection) (int, error)
 	return 0, appi18n.NewError("err_multiple_images_require_selection", map[string]any{
 		"Available": formatManifestChoices(manifest),
 	}, nil)
+}
+
+// resolvePlatformSelection maps a --platform value to an image index, using the
+// per-image platform the configs record. A tag may accompany it (narrowing the
+// tag's images); an index may not.
+func resolvePlatformSelection(imageTarPath string, manifest []types.ManifestItem, sel Selection) (int, error) {
+	if sel.ImageIndex >= 0 {
+		return 0, appi18n.NewError("err_platform_with_index", map[string]any{"Platform": sel.Platform}, nil)
+	}
+	summaries, err := ScanImageSummaries(imageTarPath)
+	if err != nil {
+		return 0, err
+	}
+	idx, err := matchPlatform(summaries, sel.Platform)
+	if err != nil {
+		return 0, err
+	}
+	if sel.RepoTag != "" {
+		// The tag must name the image the platform picked.
+		matched := false
+		if idx < len(manifest) {
+			for _, form := range []func(string) []string{
+				func(tag string) []string { return []string{tag} },
+				func(tag string) []string { return pathSuffixes(tag) },
+				func(tag string) []string { return pathSuffixes(repoNamePath(tag)) },
+				func(tag string) []string { return []string{repoTagPart(tag)} },
+			} {
+				if matchesAny(manifest[idx].RepoTags, sel.RepoTag, form) {
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched {
+			return 0, appi18n.NewError("err_platform_tag_mismatch", map[string]any{
+				"Platform":  sel.Platform,
+				"Tag":       sel.RepoTag,
+				"Available": formatPlatformChoices(summaries),
+			}, nil)
+		}
+	}
+	return idx, nil
+}
+
+// matchPlatform resolves a "os/arch[/variant]" selection among the archive's
+// images. A selection without a variant matches any variant of that
+// os/architecture; several matches are refused with the candidates listed, the
+// same way an ambiguous tag is.
+func matchPlatform(summaries []ImageSummary, want string) (int, error) {
+	spec, err := parsePlatform(want)
+	if err != nil {
+		return 0, err
+	}
+	var matches []int
+	for _, s := range summaries {
+		if !strings.EqualFold(s.OS, spec.os) || !strings.EqualFold(s.Architecture, spec.arch) {
+			continue
+		}
+		if spec.variant != "" && !strings.EqualFold(s.Variant, spec.variant) {
+			continue
+		}
+		matches = append(matches, s.Index)
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return 0, appi18n.NewError("err_platform_not_found", map[string]any{
+			"Platform":  want,
+			"Available": formatPlatformChoices(summaries),
+		}, nil)
+	default:
+		return 0, appi18n.NewError("err_platform_ambiguous", map[string]any{
+			"Platform":  want,
+			"Available": formatPlatformChoices(summaries),
+		}, nil)
+	}
+}
+
+// platformSpec is a parsed --platform value.
+type platformSpec struct {
+	os, arch, variant string
+}
+
+func parsePlatform(want string) (platformSpec, error) {
+	fields := strings.Split(strings.TrimSpace(want), "/")
+	if len(fields) < 2 || len(fields) > 3 || fields[0] == "" || fields[1] == "" {
+		return platformSpec{}, appi18n.NewError("err_platform_invalid", map[string]any{"Platform": want}, nil)
+	}
+	spec := platformSpec{os: fields[0], arch: fields[1]}
+	if len(fields) == 3 {
+		spec.variant = fields[2]
+	}
+	return spec, nil
+}
+
+// formatPlatformChoices renders the platform of every image, for error
+// messages and listings.
+func formatPlatformChoices(summaries []ImageSummary) string {
+	out := make([]string, 0, len(summaries))
+	for _, s := range summaries {
+		p := s.OS
+		if p == "" {
+			p = "?"
+		}
+		if s.Architecture != "" {
+			p += "/" + s.Architecture
+		} else {
+			p += "/?"
+		}
+		if s.Variant != "" {
+			p += "/" + s.Variant
+		}
+		out = append(out, fmt.Sprintf("[%d]=%s", s.Index, p))
+	}
+	return strings.Join(out, ", ")
 }
 
 // matchImageTag resolves the image names a user may type. A full repo tag
@@ -363,10 +510,12 @@ type ImageSummary struct {
 	// Image carries the image's repo tags, comma separated, or its config
 	// path when it has none (what -t takes).
 	Image string `json:"image"`
-	// OS and Architecture mirror the config's "os" and "architecture"; they
-	// are separate fields because a config may name only one of them.
+	// OS, Architecture and Variant mirror the config's "os", "architecture"
+	// and "variant"; they are separate fields because a config may name only
+	// some of them.
 	OS           string `json:"os,omitempty"`
 	Architecture string `json:"architecture,omitempty"`
+	Variant      string `json:"variant,omitempty"`
 	// Created is the config's "created" timestamp, as written.
 	Created string `json:"created,omitempty"`
 	// Layers counts the image's layers; Size is their stored size in the
@@ -428,6 +577,7 @@ func scanImageSummaries(imageTarPath string) ([]ImageSummary, error) {
 		if cfg, err := readImageConfig(imageTarPath, item.Config); err == nil {
 			s.OS = cfg.OS
 			s.Architecture = cfg.Architecture
+			s.Variant = cfg.Variant
 			s.Created = cfg.Created
 		}
 		if directory != nil {

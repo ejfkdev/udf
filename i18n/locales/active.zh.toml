@@ -228,3 +228,18 @@ other = "./udf cp -t repo/app:latest ./image.tar /app/config ./config"
 
 [example_cp_4]
 other = "./udf cp ./image.tar / ./rootfs"
+
+[err_platform_not_found]
+other = "没有镜像匹配平台 \"{{.Platform}}\"；归档里有: {{.Available}}"
+
+[err_platform_ambiguous]
+other = "平台 \"{{.Platform}}\" 匹配到多个镜像: {{.Available}}；请补上 variant（os/arch/variant）"
+
+[err_platform_invalid]
+other = "平台 \"{{.Platform}}\" 不是 os/arch[/variant] 形式，例如 linux/arm64"
+
+[err_platform_with_index]
+other = "--platform（{{.Platform}}）与 --index（序号）只能用一个"
+
+[err_platform_tag_mismatch]
+other = "没有镜像同时满足 {{.Tag}} 与 {{.Platform}}；归档里有: {{.Available}}"

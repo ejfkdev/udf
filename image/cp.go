@@ -45,7 +45,7 @@ func ExtractPath(imageTarPath string, meta *types.ImageMetadata, sourcePath, des
 		return 0, err
 	}
 
-	plan, err := makeExtractPlan(tree, archive, srcNode, srcRel, destPath)
+	plan, err := makeExtractPlan(tree, meta, archive, srcNode, srcRel, destPath)
 	if err != nil {
 		return 0, err
 	}
@@ -164,6 +164,7 @@ func extractSelectionSeq(plan *extractPlan, archive arch.Archive, buf []byte, di
 type extractPlan struct {
 	tree       *fsview.Node
 	archive    arch.Archive
+	meta       *types.ImageMetadata
 	destRoot   string
 	singleFile bool
 	fileTarget string
@@ -172,9 +173,10 @@ type extractPlan struct {
 	deferred   []deferredLink                     // hardlinks waiting for their source to land
 }
 
-func makeExtractPlan(tree *fsview.Node, archive arch.Archive, srcNode *fsview.Node, srcRel, destPath string) (*extractPlan, error) {
+func makeExtractPlan(tree *fsview.Node, meta *types.ImageMetadata, archive arch.Archive, srcNode *fsview.Node, srcRel, destPath string) (*extractPlan, error) {
 	plan := &extractPlan{
 		tree:     tree,
+		meta:     meta,
 		archive:  archive,
 		selected: make(map[*fsview.Node]string),
 		byLayer:  make(map[string]map[string]*fsview.Node),
@@ -261,7 +263,7 @@ func extractLayerEntries(plan *extractPlan, stream *layerStreamSource, layerName
 	} else {
 		rc, _, err := plan.archive.Open(layerName)
 		if err != nil {
-			return fmt.Errorf("open layer %s: %w", layerName, err)
+			return layerOpenError(plan.meta, layerName, err)
 		}
 		raw, closeFn = rc, func() { _ = rc.Close() }
 	}

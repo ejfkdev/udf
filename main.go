@@ -41,6 +41,10 @@ func main() {
 		xyz.CliHints{Usage: "xxd <archive> <src-path>", After: helpTextFor(lang).xxdAfter},
 		xyz.HTTPHints{Method: "GET", Path: "/xxd"},
 		[]string{"read"})
+	register(reg, "verify", "Check an image archive's digests (config, manifest, layers)", verifyArchive,
+		xyz.CliHints{Usage: "verify <archive>"},
+		xyz.HTTPHints{Method: "GET", Path: "/verify"},
+		[]string{"read"})
 	register(reg, "extract", "Extract the merged rootfs of one or more image archives", extractImages,
 		xyz.CliHints{Usage: "extract <archive...>", Default: true, After: helpTextFor(lang).extractAfter},
 		xyz.HTTPHints{Method: "POST", Path: "/extract"},
