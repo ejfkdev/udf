@@ -40,7 +40,7 @@ English version: [README.md](./README.md)
 归档处理：
 
 - 将镜像归档解包为合并后的 `rootfs`；批量提取多个归档时按核并行，结果保持输入顺序
-- 大 gzip 镜像归档的随机访问索引：首条命令用块感知 deflate 扫描器一趟建好索引（解压约 500 MB/s）并在同一趟里取出各层目录，之后多 GB 的 docker-save `tar.gz` 上 `ls`/`cp`/`cat`/`extract` 都降到几秒以内
+- 大 gzip 归档（docker-save 镜像与普通 `tar.gz` 包都算）的随机访问索引：首条命令用块感知 deflate 扫描器一趟建好索引（解压约 500 MB/s），同一趟里取出各层目录并记录每个成员的头字段，之后 `ls`/`cp`/`cat`/`extract` 不再重新解压——26 GB 升级包上从"每条命令 69 秒"变成"首次 61 秒，之后列目录 0.02 秒、提取 1.95 GB 成员 2.5 秒"
 - 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.tar.xz`、`.tar.bz2`、`.tar.zst`、`.tar.lz4`、`.zip`、`.7z`、`.rar`、`.cpio`（以及 `.cpio.gz`/`.cpio.xz`/`.cpio.zst`，如 initramfs）、`.asar`（Electron）、`.rpm`、`.deb`/`.ipk`、`.cab`（含 `.msi` 内嵌 cab）、`.nar`（Nix）、`.xar`/`.pkg`（macOS 安装器）（以及 `.ppkg` Windows 预配包，OPC/ZIP）
 - 可执行文件封装格式：PyInstaller onefile（CArchive + PYZ，重建 `.pyc`）、py2exe（PE 资源、引导脚本 `PYTHONSCRIPT` 重建为 `.pyc`、附加在 exe 尾部的模块归档）、Nuitka onefile（尾部附加与内嵌载荷）、.NET single-file 应用（bundle v1/v2/v6，含 deflate）、ZIP 自解压 exe
 - 安卓与游戏容器：`boot.img`（v0–v4：内核、ramdisk、dtb，以及 ramdisk 里 cpio 的每个文件，含模拟器 `ramdisk.img` 这类 **legacy LZ4** 压缩的 ramdisk）、稀疏镜像（`img`，作为磁盘容器即时展开）、`super` 分区（动态分区——`system`、`product`、`vendor` 等——按 extent 映射读取，独立文件或 GPT 磁盘内均可）与 Unity AssetBundle（`UnityFS`：按节点解压——存储、LZ4/LZ4HC、LZMA——条目名与内容逐字节还原）；APK 内的二进制 Android XML（AXML）——`AndroidManifest.xml`、布局文件——与编译后的资源表 `resources.arsc` 都会解码为可读文本，资源名、配置与 `@package/name` 引用都能在同一张表里解析出名称

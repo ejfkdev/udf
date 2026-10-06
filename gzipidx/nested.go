@@ -105,7 +105,7 @@ func (c *nestedCapture) feed(p []byte) {
 				c.done = true
 				return
 			}
-			_, size, typeflag, ok := parseTarHeader(hdr)
+			_, size, typeflag, _, ok := parseTarHeader(hdr)
 			if !ok {
 				c.abort = true
 				return

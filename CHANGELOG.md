@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.7.6] - 2026-10-06
+
+### Fixed
+
+- The deflate scanner decoded a fixed-Huffman block with the previous dynamic
+  block's code tables. It built the fixed tables once and never rebuilt them,
+  so the first dynamic→fixed transition in a stream produced garbage and ended
+  in "corrupt deflate stream". The 26 GB XDR upgrade bundle that reported this
+  makes that transition a megabyte in, which meant no random-access index could
+  be built for it and every command paid a full decompression (69 s for `info`,
+  and again for the next one). A hand-built stream — a dynamic block, then empty
+  fixed blocks — now pins the transition.
+
+### Changed
+
+- Plain gzip archives — a tar.gz that is not a docker-save image, like that
+  upgrade bundle — now use the random-access index as well, and every command
+  reads through it: `info`, `ls`, `cp`, `cat` and `extract` no longer
+  decompress the stream at all once the index exists. The index records each
+  member's header fields (type, mode, modification time, owner ids and link
+  target) during the same single pass that records its offset, so a listing
+  needs nothing but the index. Measured on the 26 GB bundle: the first command
+  builds the index in 61 s (the same one pass as before, cached at 6.8 MB),
+  after which `info` takes 0.016 s, a full listing 0.02 s, `cat` of a member
+  0.03 s (against 14.8 s through the stream) and `cp` of a 1.95 GB layer 2.5 s
+  (against 18 s) — with output byte-identical to `tar -xzOf` (checked by md5).
+
 ## [v0.7.5] - 2026-10-06
 
 ### Fixed

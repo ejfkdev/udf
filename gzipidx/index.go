@@ -20,7 +20,7 @@ import (
 var Magic = [8]byte{'u', 'd', 'f', 'g', 'z', 'i', 'd', 'x'}
 
 // Version is the index format version.
-const Version = 1
+const Version = 2 // v2 adds the member header fields
 
 // checkpointCtxLen is how many output bytes each checkpoint records for
 // verifying a restart. A short context can pass by luck (or because the first
@@ -42,6 +42,15 @@ type Entry struct {
 	Name   string
 	OutOff int64
 	Size   int64
+	// The header fields a listing shows, recorded during the same walk that
+	// records the offsets so a directory listing never has to read the stream
+	// again. Types follow the tar typeflag; Mode holds the permission bits.
+	Typeflag byte
+	Mode     int64
+	ModTime  int64
+	UID      int64
+	GID      int64
+	Linkname string
 }
 
 // Index is the persisted result of a scan.
@@ -370,10 +379,16 @@ func (ix *Index) writeTo(w io.Writer) error {
 		if err := writeString(w, e.Name); err != nil {
 			return err
 		}
-		for _, v := range []any{e.OutOff, e.Size} {
+		for _, v := range []any{e.OutOff, e.Size, e.Mode, e.ModTime, e.UID, e.GID} {
 			if err := binary.Write(w, binary.LittleEndian, v); err != nil {
 				return err
 			}
+		}
+		if _, err := w.Write([]byte{e.Typeflag}); err != nil {
+			return err
+		}
+		if err := writeString(w, e.Linkname); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -451,11 +466,21 @@ func ReadIndex(r io.Reader) (*Index, error) {
 			return nil, err
 		}
 		e.Name = name
-		for _, v := range []any{&e.OutOff, &e.Size} {
+		for _, v := range []any{&e.OutOff, &e.Size, &e.Mode, &e.ModTime, &e.UID, &e.GID} {
 			if err := binary.Read(r, binary.LittleEndian, v); err != nil {
 				return nil, err
 			}
 		}
+		var tf [1]byte
+		if _, err := io.ReadFull(r, tf[:]); err != nil {
+			return nil, err
+		}
+		e.Typeflag = tf[0]
+		link, err := readString(r)
+		if err != nil {
+			return nil, err
+		}
+		e.Linkname = link
 	}
 	return ix, nil
 }
@@ -589,7 +614,7 @@ func (s *dirScanner) feed(p []byte) {
 				s.done = true
 				return
 			}
-			name, size, typeflag, ok := parseTarHeader(hdr)
+			name, size, typeflag, meta, ok := parseTarHeader(hdr)
 			if !ok {
 				s.enabled = false
 				return
@@ -611,7 +636,17 @@ func (s *dirScanner) feed(p []byte) {
 				s.gnuLong = ""
 			}
 			if s.accept {
-				s.entries = append(s.entries, Entry{Name: cur, OutOff: s.pos, Size: size})
+				s.entries = append(s.entries, Entry{
+					Name:     cur,
+					OutOff:   s.pos,
+					Size:     size,
+					Typeflag: typeflag,
+					Mode:     meta.mode,
+					ModTime:  meta.mtime,
+					UID:      meta.uid,
+					GID:      meta.gid,
+					Linkname: meta.linkname,
+				})
 				s.beginHead(cur, size)
 			}
 		case 1:
@@ -713,19 +748,44 @@ func isZeroBlock(hdr []byte) bool {
 }
 
 // parseTarHeader extracts name, size and typeflag, verifying the checksum.
-func parseTarHeader(hdr []byte) (string, int64, byte, bool) {
+// tarMeta are the header fields a listing needs, kept alongside the offset.
+type tarMeta struct {
+	mode     int64
+	mtime    int64
+	uid      int64
+	gid      int64
+	linkname string
+}
+
+func parseTarHeader(hdr []byte) (string, int64, byte, tarMeta, bool) {
 	size, ok := parseTarNumber(hdr[124:136])
 	if !ok {
-		return "", 0, 0, false
+		return "", 0, 0, tarMeta{}, false
 	}
 	typeflag := hdr[156]
 	if typeflag == 0 {
 		typeflag = '0'
 	}
 	if !tarChecksumOK(hdr) {
-		return "", 0, 0, false
+		return "", 0, 0, tarMeta{}, false
 	}
-	return cstring(hdr[0:100]), size, typeflag, true
+	meta := tarMeta{}
+	if v, ok := parseTarNumber(hdr[100:108]); ok {
+		meta.mode = v & 0o7777
+	}
+	if v, ok := parseTarNumber(hdr[136:148]); ok {
+		meta.mtime = v
+	}
+	if v, ok := parseTarNumber(hdr[108:116]); ok {
+		meta.uid = v
+	}
+	if v, ok := parseTarNumber(hdr[116:124]); ok {
+		meta.gid = v
+	}
+	if typeflag == '1' || typeflag == '2' {
+		meta.linkname = cstring(hdr[157:257])
+	}
+	return cstring(hdr[0:100]), size, typeflag, meta, true
 }
 
 func parseTarNumber(b []byte) (int64, bool) {

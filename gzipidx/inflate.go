@@ -21,6 +21,15 @@ import (
 // maxWindow is the deflate back-reference reach.
 const maxWindow = 32768
 
+// tableKind says which tables the scanner's literal/distance tables hold.
+type tableKind uint8
+
+const (
+	tablesNone tableKind = iota
+	tablesFixed
+	tablesDynamic
+)
+
 // flushThreshold is how much output the scanner buffers before handing it to
 // the sink and sliding the retained history forward. Buffers are allocated
 // with room for a flush threshold plus maxWindow of history, which lets the
@@ -76,7 +85,11 @@ type scanner struct {
 
 	lit, dist huffmanTable
 	clTable   huffmanTable
-	fixedInit bool
+	// tableKind records which code tables the literal/distance tables
+	// currently hold. A dynamic block replaces them, so a fixed block that
+	// follows one must be rebuilt — building the fixed tables once and reusing
+	// them decodes a fixed block with the previous dynamic block's lengths.
+	tableKind tableKind
 
 	// reusable scratch buffers for header parsing
 	clLengths []uint8
@@ -288,7 +301,7 @@ func (h *huffmanTable) build(lengths []uint8) error {
 	}
 	for _, l := range lengths {
 		if l > 15 {
-			return errCorrupt
+			return fmt.Errorf("%w: code length %d > 15", errCorrupt, l)
 		}
 		h.counts[l]++
 	}
@@ -301,7 +314,7 @@ func (h *huffmanTable) build(lengths []uint8) error {
 		left <<= 1
 		left -= h.counts[l]
 		if left < 0 {
-			return errCorrupt
+			return fmt.Errorf("%w: oversubscribed code at length %d", errCorrupt, l)
 		}
 	}
 	h.complete = left == 0
@@ -395,7 +408,7 @@ func (s *scanner) decode(h *huffmanTable) (uint16, error) {
 		first <<= 1
 		code <<= 1
 	}
-	return 0, errCorrupt
+	return 0, fmt.Errorf("%w: no canonical code matches the lookahead", errCorrupt)
 }
 
 // --- block decoding ---
@@ -467,41 +480,48 @@ func (s *scanner) scan() error {
 		}
 		final, err := s.readBits(1)
 		if err != nil {
-			return err
+			return s.at(bitStart, outStart, err)
 		}
 		btype, err := s.readBits(2)
 		if err != nil {
-			return err
+			return s.at(bitStart, outStart, err)
 		}
 		switch btype {
 		case 0:
 			if err := s.storedBlock(); err != nil {
-				return err
+				return s.at(bitStart, outStart, err)
 			}
 		case 1:
-			if !s.fixedInit {
+			if s.tableKind != tablesFixed {
 				if err := s.buildFixed(); err != nil {
-					return err
+					return s.at(bitStart, outStart, err)
 				}
-				s.fixedInit = true
+				s.tableKind = tablesFixed
 			}
 			if err := s.huffmanBlock(); err != nil {
-				return err
+				return s.at(bitStart, outStart, err)
 			}
 		case 2:
 			if err := s.dynamicBlock(); err != nil {
-				return err
+				return s.at(bitStart, outStart, err)
 			}
+			s.tableKind = tablesDynamic
 			if err := s.huffmanBlock(); err != nil {
-				return err
+				return s.at(bitStart, outStart, err)
 			}
 		default:
-			return errCorrupt
+			return s.at(bitStart, outStart, fmt.Errorf("block type %d", btype))
 		}
 		if final == 1 {
 			return nil
 		}
 	}
+}
+
+// at adds where a failure happened to the error: a bit position and an output
+// offset locate the block, and the block type says which tables were in play.
+func (s *scanner) at(bitStart, outStart int64, err error) error {
+	return fmt.Errorf("at bit %d (output offset %d): %w", bitStart, outStart, err)
 }
 
 func (s *scanner) storedBlock() error {
@@ -689,7 +709,7 @@ func (s *scanner) dynamicBlock() error {
 		case sym == 16:
 			if len(lengths) == 0 {
 				sync()
-				return errCorrupt
+				return fmt.Errorf("%w: code-length repeat with nothing to repeat", errCorrupt)
 			}
 			rep, err := readBits(2)
 			if err != nil {
@@ -721,7 +741,7 @@ func (s *scanner) dynamicBlock() error {
 		}
 		if len(lengths) > nlit+ndist {
 			sync()
-			return errCorrupt
+			return fmt.Errorf("%w: code lengths overrun the table (%d > %d)", errCorrupt, len(lengths), nlit+ndist)
 		}
 	}
 	sync()
@@ -808,7 +828,7 @@ func (s *scanner) huffmanBlock() error {
 			got, nb, ok := decodeCanonical(lit, bb)
 			if !ok {
 				sync()
-				return errCorrupt
+				return fmt.Errorf("%w: no literal/length code for %#x", errCorrupt, bb&(1<<fastBits-1))
 			}
 			sym = got
 			bb >>= nb
@@ -836,7 +856,7 @@ func (s *scanner) huffmanBlock() error {
 		idx := int(sym) - 257
 		if idx >= len(lengthBase) {
 			sync()
-			return errCorrupt
+			return fmt.Errorf("%w: length symbol %d out of range", errCorrupt, sym)
 		}
 		length := int32(lengthBase[idx])
 		if ne := lengthExtra[idx]; ne > 0 {
@@ -854,7 +874,7 @@ func (s *scanner) huffmanBlock() error {
 			got, nb, ok := decodeCanonical(dst, bb)
 			if !ok {
 				sync()
-				return errCorrupt
+				return fmt.Errorf("%w: no distance code for %#x", errCorrupt, bb&(1<<fastBits-1))
 			}
 			dsym = got
 			bb >>= nb
@@ -862,7 +882,7 @@ func (s *scanner) huffmanBlock() error {
 		}
 		if int(dsym) >= len(distBase) {
 			sync()
-			return errCorrupt
+			return fmt.Errorf("%w: distance symbol %d out of range", errCorrupt, dsym)
 		}
 		distance := int32(distBase[dsym])
 		if de := distExtra[dsym]; de > 0 {
@@ -882,7 +902,7 @@ func (s *scanner) huffmanBlock() error {
 		start := len(out)
 		if int(distance) > start || int(distance) > maxWindow {
 			sync()
-			return errCorrupt
+			return fmt.Errorf("%w: distance %d with %d bytes of history", errCorrupt, distance, start)
 		}
 		out = out[:start+int(length)]
 		src := start - int(distance)

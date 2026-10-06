@@ -115,3 +115,41 @@ func TestIndexBuildAndRead(t *testing.T) {
 		t.Fatal("random access after load mismatch")
 	}
 }
+
+// TestIndexEntryFieldsRoundTrip checks that the member header fields recorded
+// during the walk survive a save and load: a listing built from the index must
+// not need to read the stream again.
+func TestIndexEntryFieldsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	ix := &Index{
+		FileSize:     1 << 20,
+		DeflateStart: 10,
+		TotalOut:     1 << 20,
+		SingleMember: true,
+		Checks:       []Checkpoint{{BitPos: 8, OutPos: 0, Window: []byte{1, 2}, Ctx: []byte{3}}},
+		Entries: []Entry{
+			{Name: "a.txt", OutOff: 512, Size: 12, Typeflag: '0', Mode: 0o644, ModTime: 1700000000, UID: 1000, GID: 1000},
+			{Name: "link", OutOff: 1024, Size: 0, Typeflag: '2', Mode: 0o777, ModTime: 1700000001, UID: 0, GID: 0, Linkname: "a.txt"},
+			{Name: "dir/", OutOff: 1536, Size: 0, Typeflag: '5', Mode: 0o755, ModTime: 1700000002, UID: 1, GID: 2},
+		},
+	}
+	path := filepath.Join(dir, "x.idx")
+	if err := ix.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Entries) != len(ix.Entries) {
+		t.Fatalf("loaded %d entries, want %d", len(got.Entries), len(ix.Entries))
+	}
+	for i := range ix.Entries {
+		want, have := ix.Entries[i], got.Entries[i]
+		if have.Name != want.Name || have.OutOff != want.OutOff || have.Size != want.Size ||
+			have.Typeflag != want.Typeflag || have.Mode != want.Mode || have.ModTime != want.ModTime ||
+			have.UID != want.UID || have.GID != want.GID || have.Linkname != want.Linkname {
+			t.Fatalf("entry %d round-tripped as %+v, want %+v", i, have, want)
+		}
+	}
+}

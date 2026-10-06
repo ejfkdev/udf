@@ -103,11 +103,12 @@ func PlainArchiveInfo(path string) (*PlainInfo, error) {
 		return &cached, nil
 	}
 
-	ar, err := arch.Open(path)
+	src, err := openPlainSource(path)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := ar.List()
+	defer src.close()
+	entries, err := src.ar.List()
 	if err != nil {
 		return nil, err
 	}
@@ -128,15 +129,22 @@ func PlainArchiveInfo(path string) (*PlainInfo, error) {
 // arch.Open(...).Open can stream it; Path is the normalized slash-separated
 // path used for traversal and resolution.
 func buildPlainTree(archivePath string) (*fsview.Node, error) {
-	ar, err := arch.Open(archivePath)
+	src, err := openPlainSource(archivePath)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := ar.List()
+	defer src.close()
+	entries, err := src.ar.List()
 	if err != nil {
 		return nil, err
 	}
+	return plainTreeFromEntries(entries)
+}
 
+// plainTreeFromEntries builds the flat tree a plain archive lists as: a
+// member's name is its path and intermediate directories are implied, so the
+// shape is known without touching the stream.
+func plainTreeFromEntries(entries []arch.Entry) (*fsview.Node, error) {
 	root := &fsview.Node{Kind: fsview.KindDir, Mode: 0o755}
 	for _, e := range entries {
 		clean, err := fsview.CleanEntryName(e.Name)
@@ -195,15 +203,32 @@ func ReadPlainArchiveFile(archivePath, sourcePath string) (io.ReadCloser, int64,
 		return nil, 0, appi18n.NewError("err_cp_src_not_found", map[string]any{"Path": sourcePath}, nil)
 	}
 
-	ar, err := arch.Open(archivePath)
+	src, err := openPlainSource(archivePath)
 	if err != nil {
 		return nil, 0, err
 	}
-	rc, size, err := ar.Open(srcNode.Layer)
+	rc, size, err := src.ar.Open(srcNode.Layer)
 	if err != nil {
+		_ = src.close()
 		return nil, 0, fmt.Errorf("open %s: %w", srcNode.Layer, err)
 	}
-	return rc, size, nil
+	return &closeWithReadCloser{rc: rc, close: src.close}, size, nil
+}
+
+// closeWithReadCloser closes the archive source when the member is closed.
+type closeWithReadCloser struct {
+	rc    io.ReadCloser
+	close func() error
+}
+
+func (c *closeWithReadCloser) Read(p []byte) (int, error) { return c.rc.Read(p) }
+
+func (c *closeWithReadCloser) Close() error {
+	err := c.rc.Close()
+	if cerr := c.close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // ExtractPlainArchive extracts the entire plain archive into destDir, writing
@@ -213,10 +238,12 @@ func ExtractPlainArchive(archivePath, destDir string, bufferSize int) (int, erro
 	if err != nil {
 		return 0, err
 	}
-	ar, err := arch.Open(archivePath)
+	src, err := openPlainSource(archivePath)
 	if err != nil {
 		return 0, err
 	}
+	defer src.close()
+	ar := src.ar
 	buf := make([]byte, bufferSize)
 	var dirs []fsutil.DirMetadata
 	count := 0
@@ -247,10 +274,12 @@ func ExtractPlainPath(archivePath, source, dest string, bufferSize int) (int, er
 		return 0, appi18n.NewError("err_cp_src_not_found", map[string]any{"Path": source}, nil)
 	}
 
-	ar, err := arch.Open(archivePath)
+	src, err := openPlainSource(archivePath)
 	if err != nil {
 		return 0, err
 	}
+	defer src.close()
+	ar := src.ar
 
 	destTarget := dest
 	if srcNode.Kind == fsview.KindDir {
