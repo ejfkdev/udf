@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.7.8] - 2026-10-06
+
+### Added
+
+- The random-access index covers zstd-compressed tars as well as gzip ones, so
+  a large `.tar.zst` stops costing a full decompression per command: one pass
+  records the frame table and the member directory, and every later `info`/`ls`
+  answers from it (a 3 GB `tar.zst`: 1.2 s per listing before, 13 ms after).
+  Reading a member starts at the frame that holds it when the stream has
+  several — what pzstd, the zstd seekable format and containerd's zstd-chunked
+  layers produce — and at the beginning when it has one, which the `zstd` CLI
+  and `tar --zstd` write; there the member directory still turns two decodes
+  into one. The index holds no decoder windows, so it stays small (a few KB for
+  a friend's frame table, a few MB for the directory of a huge archive).
+
+### Fixed
+
+- qcow2 images whose clusters are zstd-compressed — `qemu-img convert -c -o
+  compression_type=zstd` writes them — failed outright with "unsupported
+  compression type (zstd)": the qcow2 library handles deflate itself and leaves
+  zstd to the caller, and udf now registers the decoder. Verified on a
+  qemu-produced image of an ext4 filesystem: its superblock, group descriptors
+  and inodes are read through the compressed clusters and their checksums
+  verify, which is an independent check that the decompressed bytes are right.
+
 ## [v0.7.7] - 2026-10-06
 
 ### Added

@@ -26,6 +26,7 @@ import (
 	"github.com/ejfkdev/udf/diskkit/filesystem/fat32"
 	"github.com/ejfkdev/udf/diskkit/filesystem/iso9660"
 	"github.com/ejfkdev/udf/diskkit/filesystem/squashfs"
+	"github.com/klauspost/compress/zstd"
 	qcow2reader "github.com/lima-vm/go-qcow2reader"
 	qcow2fmt "github.com/lima-vm/go-qcow2reader/image/qcow2"
 	sif "github.com/sylabs/sif/v2/pkg/sif"
@@ -2012,4 +2013,32 @@ func createDiskSymlink(target, linkTarget string) error {
 		return err
 	}
 	return os.Symlink(linkTarget, target)
+}
+
+// The qcow2 library answers compressed clusters with deflate by default and
+// leaves zstd to the caller; qemu writes zstd-compressed clusters with
+// `qemu-img convert -c -o compression_type=zstd`, so register the decoder once
+// here. Without it every read of such an image fails with "unsupported
+// compression type".
+func init() { registerQCow2ZstdDecompressor() }
+
+// registerQCow2ZstdDecompressor installs the zstd decoder for compressed
+// clusters; separate from init so a test can assert it is reachable.
+func registerQCow2ZstdDecompressor() {
+	qcow2fmt.SetDecompressor(qcow2fmt.CompressionTypeZstd, func(r io.Reader) (io.ReadCloser, error) {
+		zr, err := zstd.NewReader(r)
+		if err != nil {
+			return nil, err
+		}
+		return &zstdReadCloser{dec: zr}, nil
+	})
+}
+
+// zstdReadCloser adapts the zstd decoder, whose Close returns no error.
+type zstdReadCloser struct{ dec *zstd.Decoder }
+
+func (z *zstdReadCloser) Read(p []byte) (int, error) { return z.dec.Read(p) }
+func (z *zstdReadCloser) Close() error {
+	z.dec.Close()
+	return nil
 }

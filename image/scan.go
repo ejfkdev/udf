@@ -8,7 +8,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/ejfkdev/udf/gzipidx"
 	appi18n "github.com/ejfkdev/udf/i18n"
 	arch "github.com/ejfkdev/udf/image/archive"
 	"github.com/ejfkdev/udf/types"
@@ -68,7 +67,7 @@ func scanImageMetadata(imageTarPath string, sel Selection) (*types.ImageMetadata
 
 // scanImageMetadataIndexed reads manifest.json and the selected config from an
 // index-backed reader.
-func scanImageMetadataIndexed(imageTarPath string, r *gzipidx.Reader, sel Selection) (*types.ImageMetadata, error) {
+func scanImageMetadataIndexed(imageTarPath string, r indexedOuter, sel Selection) (*types.ImageMetadata, error) {
 	manifestBytes, err := readIndexedEntry(r, "manifest.json")
 	if err != nil {
 		return nil, err
@@ -102,12 +101,9 @@ func scanImageMetadataIndexed(imageTarPath string, r *gzipidx.Reader, sel Select
 // slice with a nil error means the index has no such member; a non-nil error
 // means the member exists but could not be read, and the caller should fall
 // back to reading the archive.
-func readIndexedEntry(r *gzipidx.Reader, name string) ([]byte, error) {
-	for _, e := range r.Index().Entries {
-		if e.Name != name {
-			continue
-		}
-		data, err := r.ReadRange(e.OutOff, e.Size)
+func readIndexedEntry(r indexedOuter, name string) ([]byte, error) {
+	if e, ok := r.Lookup(name); ok {
+		data, err := readOuterRange(r, e.OutOff, e.Size)
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s: %v", errIndexRead, name, err)
 		}
@@ -554,8 +550,8 @@ func scanImageSummaries(imageTarPath string) ([]ImageSummary, error) {
 	// the size of a layer member is the space it takes in the archive.
 	var directory map[string]int64
 	if r, ok := loadImageIndex(imageTarPath); ok {
-		directory = make(map[string]int64, len(r.Index().Entries))
-		for _, e := range r.Index().Entries {
+		directory = make(map[string]int64, len(r.Entries()))
+		for _, e := range r.Entries() {
 			directory[e.Name] = e.Size
 		}
 		_ = r.Close()
@@ -656,7 +652,7 @@ func storedSizeOf(imageTarPath string, layers []string) (int64, bool) {
 	defer r.Close()
 	var total int64
 	for _, layer := range layers {
-		e, ok := r.Index().Lookup(layer)
+		e, ok := r.Lookup(layer)
 		if !ok {
 			return 0, false
 		}

@@ -517,6 +517,73 @@ func readBlob(r io.Reader, max uint32) ([]byte, error) {
 
 // --- tar directory scanning ---
 
+// ScanTarDirectory walks the tar inside r and returns its members with the
+// header fields a listing needs: the same walk the index build uses, exposed so
+// another compressed-tar index (zstd, say) records the same directory without
+// duplicating the tar semantics.
+func ScanTarDirectory(r io.Reader, opts *NestedOptions) ([]Entry, error) {
+	sc := &dirScanner{enabled: true, nested: opts}
+	buf := make([]byte, 1<<20)
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			sc.feed(buf[:n])
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var out []Entry
+	sc.finish(&out)
+	return out, nil
+}
+
+// WriteEntry and ReadEntry are the on-disk form of one member, shared by every
+// index that records a tar directory.
+func WriteEntry(w io.Writer, e *Entry) error {
+	if err := writeString(w, e.Name); err != nil {
+		return err
+	}
+	for _, v := range []any{e.OutOff, e.Size, e.Mode, e.ModTime, e.UID, e.GID} {
+		if err := binary.Write(w, binary.LittleEndian, v); err != nil {
+			return err
+		}
+	}
+	if _, err := w.Write([]byte{e.Typeflag}); err != nil {
+		return err
+	}
+	return writeString(w, e.Linkname)
+}
+
+// ReadEntry reads one member written by WriteEntry.
+func ReadEntry(r io.Reader) (Entry, error) {
+	var e Entry
+	name, err := readString(r)
+	if err != nil {
+		return e, err
+	}
+	e.Name = name
+	for _, v := range []any{&e.OutOff, &e.Size, &e.Mode, &e.ModTime, &e.UID, &e.GID} {
+		if err := binary.Read(r, binary.LittleEndian, v); err != nil {
+			return e, err
+		}
+	}
+	var tf [1]byte
+	if _, err := io.ReadFull(r, tf[:]); err != nil {
+		return e, err
+	}
+	e.Typeflag = tf[0]
+	link, err := readString(r)
+	if err != nil {
+		return e, err
+	}
+	e.Linkname = link
+	return e, nil
+}
+
 // dirScanner walks tar headers in the decompressed stream to record member
 // offsets. It understands plain, GNU long-name and PAX extended headers.
 type dirScanner struct {

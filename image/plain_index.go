@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/ejfkdev/udf/fsview"
-	"github.com/ejfkdev/udf/gzipidx"
 	arch "github.com/ejfkdev/udf/image/archive"
 )
 
@@ -53,9 +52,8 @@ func openIndexedPlainArchive(archivePath string) (*plainSource, bool) {
 	if !ok {
 		return nil, false
 	}
-	ix := r.Index()
-	entries := make([]arch.Entry, 0, len(ix.Entries))
-	for _, e := range ix.Entries {
+	entries := make([]arch.Entry, 0, len(r.Entries()))
+	for _, e := range r.Entries() {
 		kind := kindForTarTypeflag(e.Typeflag)
 		mode := e.Mode
 		if mode == 0 {
@@ -73,7 +71,7 @@ func openIndexedPlainArchive(archivePath string) (*plainSource, bool) {
 		})
 	}
 	return &plainSource{
-		ar:     &indexedPlainArchive{ix: r, index: ix, entries: entries},
+		ar:     &indexedPlainArchive{ix: r, entries: entries},
 		close:  r.Close,
 		source: "index",
 	}, true
@@ -81,8 +79,7 @@ func openIndexedPlainArchive(archivePath string) (*plainSource, bool) {
 
 // indexedPlainArchive serves a plain archive's members from the index.
 type indexedPlainArchive struct {
-	ix      *gzipidx.Reader
-	index   *gzipidx.Index
+	ix      indexedOuter
 	entries []arch.Entry
 }
 
@@ -91,7 +88,7 @@ func (a *indexedPlainArchive) List() ([]arch.Entry, error) { return a.entries, n
 // Open restarts the decompressor at the member's checkpoint and reads its
 // bytes: no part of the stream before it is decompressed.
 func (a *indexedPlainArchive) Open(name string) (io.ReadCloser, int64, error) {
-	e, ok := a.index.Lookup(name)
+	e, ok := a.ix.Lookup(name)
 	if !ok {
 		return nil, 0, fmt.Errorf("entry %s not found in archive", name)
 	}
