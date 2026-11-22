@@ -106,6 +106,15 @@ func ReadArchiveFile(path string, meta *types.ImageMetadata, sourcePath string) 
 		return nil, 0, appi18n.NewError("err_cp_src_not_found", map[string]any{"Path": sourcePath}, nil)
 	}
 
+	// Seekable-compression layers: the file comes straight from the compressed
+	// ranges the layer's table points at — a few kilobytes of reads instead of
+	// a full layer decode. Any failure falls back to the generic path.
+	if fi := layerFeature(meta, srcNode.Layer); fi != "" {
+		if rc, size, err := openFeatureLayerFile(path, meta, srcNode.Layer, srcNode.EntryName); err == nil {
+			return rc, size, nil
+		}
+	}
+
 	archive, err := arch.Open(path)
 	if err != nil {
 		return nil, 0, err

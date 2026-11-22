@@ -40,12 +40,14 @@ Three interfaces, one definition:
 Archive handling:
 
 - Extract image archives into a merged `rootfs`; a batch of archives is extracted with one archive per core, results in input order
+- Seekable layer fast paths: eStargz and zstd:chunked layers list from their embedded tables without touching the payload, and `cat`/`cp` read only the compressed ranges holding the requested file (a 210 MB eStargz layer lists in ~10 ms from ~13 KB of reads; `info` flags these layers under `features`)
 - Random-access index for large compressed archives — gzip and zstd, docker-save images and plain `tar.gz`/`.tar.zst` bundles alike: the first command builds it in one pass with a block-aware deflate scanner (~500 MB/s decompressed), picking the layer directories out of that same pass and recording every member's header fields, after which `ls`/`cp`/`cat`/`extract` drop to well under a second instead of decompressing the stream again (on a 26 GB upgrade bundle: 69 s per command → 61 s once, then 0.02 s to list and 2.5 s to extract a 1.95 GB member)
-- Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz4`, `.zip`, `.7z`, `.rar`, `.cpio` (and `.cpio.gz`/`.cpio.xz`/`.cpio.zst`, e.g. initramfs), `.asar` (Electron), `.rpm`, `.deb`/`.ipk`, `.cab`/`.msi`-embedded cabs, `.nar` (Nix), `.xar`/`.pkg` (macOS installer) (and `.ppkg` Windows provisioning packages, an OPC/ZIP)
+- Outer archive formats: `.tar`, `.tar.gz`, `.tgz`, `.tar.xz`, `.tar.bz2`, `.tar.zst`, `.tar.lz4`, `.zip`, `.7z`, `.rar`, `.cpio` (and `.cpio.gz`/`.cpio.xz`/`.cpio.zst`, e.g. initramfs), `.asar` (Electron), `.rpm`, `.deb`/`.ipk`, `.msi`/`.msp` (COM/OLE compound files: the storage tree is listed, with embedded CABs expanded in place), `.cab`, `.nar` (Nix), `.xar`/`.pkg` (macOS installer, Payload/Scripts cpio contents expanded in place) (and `.ppkg` Windows provisioning packages, an OPC/ZIP)
 - Executable bundle formats: PyInstaller onefile (CArchive + PYZ, `.pyc` reconstruction), py2exe (PE resources, the bootstrap `PYTHONSCRIPT` script rebuilt as a `.pyc`, and the module archive appended to the exe), Nuitka onefile (appended and embedded payloads), .NET single-file apps (bundle v1/v2/v6, incl. deflate), ZIP self-extracting executables
 - Android and game containers: `boot.img` (v0–v4: kernel, ramdisk, dtb, plus every file inside the ramdisk's cpio, including LZ4-legacy-compressed ramdisks such as the emulator's `ramdisk.img`), sparse images (`img`, expanded on the fly as a disk container), `super` partitions (dynamic partitions — `system`, `product`, `vendor`, … — read through their extent mappings, standalone or inside a GPT disk) and Unity AssetBundles (`UnityFS`: per-node decompression — stored, LZ4/LZ4HC, LZMA — with entry names and byte-exact contents); binary Android XML (AXML) inside APKs — `AndroidManifest.xml`, layouts — and the compiled resource table `resources.arsc` are decoded to readable text, resource names, configurations and `@package/name` references resolving against the table itself
-- Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami` (MBR- and GPT-partitioned disks included), OVA, OVF, VMA, SIF, AppImage, Android sparse (ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes and Android dynamic partitions)
+- Virtual disk images: qcow2, QCOW v1, VMDK, VHD/VHDX, VDI, QED, Parallels, WIM, ESD, SWM, FFU, raw/`.img`/`.ami` (MBR-, GPT- and APM-partitioned disks included), OVA, OVF, VMA, SIF, AppImage, **DMG** (Apple UDIF: zlib/bzip2/xz/lzfse/ADC chunk compression), Android sparse (ext4/xfs/btrfs/NTFS/squashfs/HFS+/ISO9660/UDF/exFAT/EROFS/FAT, including LVM2 logical volumes and Android dynamic partitions)
 - Common image layouts: flat `manifest.json + config.json + layers/...`, classic `docker save` (`<layer-id>/layer.tar`), OCI image layout directories, and single-file OCI image archives (`.oci.tar`, incl. flatpak bundles)
+- Seekable layer fast paths: eStargz and zstd:chunked layers list from their embedded tables without touching the payload, and `cat`/`cp` read only the compressed ranges holding the requested file (a 210 MB eStargz layer lists in ~10 ms from ~13 KB of reads; `info` flags these layers under `features`)
 - Input may be a single archive, a glob pattern, or a directory (top level scanned)
 
 Extraction correctness:
@@ -141,7 +143,7 @@ Volumes are named `p1`…`pN` for partitions and `vg/lv` for LVM logical volumes
 - MBR/GPT partition tables are parsed, plus LVM2 physical volumes in-process:
   each logical volume is exposed as a selectable volume, in addition to plain
   partitions
-- Filesystems supported for extraction are **ext4**, **xfs**, **btrfs**, **NTFS**, **squashfs**, **ISO9660**, **UDF**, **exFAT**, **EROFS** and **FAT** (fat12/16/32)
+- Filesystems supported for extraction are **ext4**, **xfs**, **btrfs**, **NTFS**, **squashfs**, **HFS+**/HFSX (the macOS filesystem DMG volumes carry), **ISO9660**, **UDF**, **exFAT**, **EROFS** and **FAT** (fat12/16/32)
 - When a disk holds several filesystems, `ls` and `cp` require a volume prefix
   (or start from `/` and descend); a single filesystem volume is used
   implicitly, so `./udf ls img.qcow2 /etc` still works for simple images
@@ -235,7 +237,7 @@ Built-in conveniences: `-h` per-command help, `-v` version, `--json` for machine
 
 Every command takes **one input expression** for the archive:
 
-- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`/PyInstaller/py2exe/Nuitka/.NET single-file executable, Android `boot.img`, Unity AssetBundle) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`, Android sparse `img`) — required by `info`, `ls` and `cp`
+- a single archive file (`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`/`.msi`/PyInstaller/py2exe/Nuitka/.NET single-file executable, Android `boot.img`, Unity AssetBundle) or a disk image (`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`/`.dmg`, Android sparse `img`) — required by `info`, `ls` and `cp`
 - a glob pattern, or a directory (top level scanned, not recursive) — `extract` also accepts these and expands them into a batch
 
 Examples:

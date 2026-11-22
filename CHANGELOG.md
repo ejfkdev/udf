@@ -4,6 +4,75 @@ All notable changes to this project will be documented in this file. The GitHub
 release workflow reads the topmost `## [vX.Y.Z]` section into the release notes;
 keep the newest version at the top.
 
+## [v0.7.9] - 2026-11-22
+
+### Changed
+
+- Reading stopped costing whole-file passes wherever the format allows it:
+  - **MSI / compound files** are now lazy end to end. A listing reads only the
+    directory sectors and each cabinet's header region — a 211 MB installer
+    with a 200 MB payload lists in ~40 ms where the previous reader
+    materialized every stream; streams are served sector by sector from the
+    FAT/mini-FAT chains instead of being loaded whole, and a cabinet member is
+    decompressed only for the CFDATA blocks its range touches (MSZIP blocks are
+    independent, so blocks outside the range cost an 8-byte header each).
+  - **eStargz layers** list from their table of contents alone — the 51-byte
+    footer plus the TOC member, a few kilobytes regardless of layer size — and
+    `cat`/`cp` read only the compressed ranges the TOC points at (member range
+    plus inner offset), verified byte-for-byte against a blob produced by
+    stargz-snapshotter itself. On a 210 MB image, `ls` reads ~13 KB instead of
+    decompressing the layer, and one file costs its own member only.
+  - **zstd:chunked layers** work the same way off the containers/storage
+    manifest in the trailing skippable frame: entries from metadata, payloads
+    decoded frame by frame, only for the requested file.
+  - The **HFS+ catalog index** is built on first use rather than at open
+    time, so opening a volume is one volume-header read.
+  - Cabinet parsing now takes any random-access source (file, embedded
+    stream, byte range) instead of slurping bytes, and `info`'s layer-feature
+    sniff already read only tails — the plumbing it needs now exists in one
+    place.
+  - Mixed images (some layers seekable, some not) keep the streaming paths,
+    which remain the fallback whenever a table does not parse.
+
+
+### Added
+
+- macOS installer packages (.pkg) surface their payload: the Payload and
+  Scripts members are cpio archives wrapped in gzip, and their contents now
+  list in place as "Payload/<path>" with the member bytes still reachable —
+  same presentation as an MSI's embedded cabinets. pkgbuild writes the older
+  "odc" cpio flavor (magic 070707), which the cpio reader used elsewhere does
+  not know, so a dedicated odc reader backs this (it also covers any old
+  initramfs using that flavor). Apple's own pbzx-wrapped payloads stay
+  unsupported with a clear error (no real sample to verify against).
+- Apple DMG images (UDIF) open as virtual disks. Every chunk compression
+  hdiutil writes is decoded — zlib (UDZO), bzip2 (UDBZ), xz (ULMO), LZFSE
+  (ULFO), Apple ADC (UDCO, ported from dmg2img) and raw/zero (UDRO) — and the
+  volume inside is read through the new HFS+ filesystem driver (HFS+ and
+  case-sensitive HFSX): the catalog B-tree, fork extents with the overflow
+  file for fragmented files, unix modes and timestamps, and symlinks. Old-style
+  Apple Partition Map disks, which the partition-table parser did not know,
+  are now split into partitions too. Every field offset was verified against
+  hdiutil-written images in all five compression formats and four partition
+  layouts (GPT/MBR/APM/no map), with extraction byte-compared against the
+  mounted volumes; a 200 MB image extracts at several hundred MB/s.
+- MSI installers (and any COM/OLE compound file: `.msi`, `.msp`, legacy Office)
+  open as archives. The storage tree lists as directories and streams, MSI's
+  compressed stream-name encoding is decoded (table streams appear as
+  `Property`, `File`, ... instead of mojibake), and every embedded cabinet is
+  expanded in place, so the payload lists as `data1.cab/<member>` the way a
+  .deb surfaces its data.tar. MSZIP cabinet blocks now strip the "CK" chunk
+  signature that real installers write, and a full-size stored chunk without
+  the signature is copied raw. Verified against an MSI written by msitools'
+  wixl, cross-checked with msiinfo/msiextract.
+- `info` reports seekable-compression features detected in layer bytes:
+  eStargz blobs (the stargz-snapshotter footer with its SG/STARGZ extra field)
+  and zstd:chunked blobs (containers/storage's skippable-frame footer). The
+  sniff reads only the last few dozen bytes of each layer through whichever
+  random-access path exists (OCI layout directories, plain tars, or an already
+  built outer index) and never triggers an index build by itself; layers whose
+  tail cannot be read cheaply are simply not reported.
+
 ## [v0.7.8] - 2026-10-06
 
 ### Added

@@ -45,7 +45,7 @@ func ExtractPath(imageTarPath string, meta *types.ImageMetadata, sourcePath, des
 		return 0, err
 	}
 
-	plan, err := makeExtractPlan(tree, meta, archive, srcNode, srcRel, destPath)
+	plan, err := makeExtractPlan(tree, meta, archive, imageTarPath, srcNode, srcRel, destPath)
 	if err != nil {
 		return 0, err
 	}
@@ -162,24 +162,26 @@ func extractSelectionSeq(plan *extractPlan, archive arch.Archive, buf []byte, di
 }
 
 type extractPlan struct {
-	tree       *fsview.Node
-	archive    arch.Archive
-	meta       *types.ImageMetadata
-	destRoot   string
-	singleFile bool
-	fileTarget string
-	selected   map[*fsview.Node]string            // node -> path relative to destRoot
-	byLayer    map[string]map[string]*fsview.Node // layer -> clean entry path
-	deferred   []deferredLink                     // hardlinks waiting for their source to land
+	tree         *fsview.Node
+	archive      arch.Archive
+	imageTarPath string
+	meta         *types.ImageMetadata
+	destRoot     string
+	singleFile   bool
+	fileTarget   string
+	selected     map[*fsview.Node]string            // node -> path relative to destRoot
+	byLayer      map[string]map[string]*fsview.Node // layer -> clean entry path
+	deferred     []deferredLink                     // hardlinks waiting for their source to land
 }
 
-func makeExtractPlan(tree *fsview.Node, meta *types.ImageMetadata, archive arch.Archive, srcNode *fsview.Node, srcRel, destPath string) (*extractPlan, error) {
+func makeExtractPlan(tree *fsview.Node, meta *types.ImageMetadata, archive arch.Archive, imageTarPath string, srcNode *fsview.Node, srcRel, destPath string) (*extractPlan, error) {
 	plan := &extractPlan{
-		tree:     tree,
-		meta:     meta,
-		archive:  archive,
-		selected: make(map[*fsview.Node]string),
-		byLayer:  make(map[string]map[string]*fsview.Node),
+		tree:         tree,
+		meta:         meta,
+		archive:      archive,
+		imageTarPath: imageTarPath,
+		selected:     make(map[*fsview.Node]string),
+		byLayer:      make(map[string]map[string]*fsview.Node),
 	}
 
 	// 提取镜像根：内容直接放入 destPath
@@ -252,6 +254,14 @@ func (p *extractPlan) inSelection(node *fsview.Node) bool {
 // define nodes of the selection. The layer bytes come from the shared
 // sequential source when available, otherwise from a random-access open.
 func extractLayerEntries(plan *extractPlan, stream *layerStreamSource, layerName string, buf []byte, dirs *[]fsutil.DirMetadata, count *int) error {
+	// Seekable-compression layers: entries come from the layer's own table and
+	// payloads from their compressed ranges — no full-layer decode. On any
+	// failure fall through to streaming the layer.
+	if feature := layerFeature(plan.meta, layerName); feature != "" {
+		if err := applyFeatureLayerEntries(plan, layerName, feature, buf, dirs, count); err == nil {
+			return nil
+		}
+	}
 	var raw io.Reader
 	var closeFn func()
 	if stream != nil {

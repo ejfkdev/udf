@@ -28,6 +28,7 @@ const (
 	magicSIF      = "SIF_MAGIC\x00"
 	magicWIM      = "MSWIM\x00\x00\x00"
 	magicFFU      = "SignedImage " // at offset 4
+	magicKoly     = "koly"         // UDIF (dmg) trailer at the end of the file
 
 	vdiSignature = 0xbeda107f // at offset 0x40
 
@@ -105,6 +106,11 @@ func detectDiskContainer(path string) (string, error) {
 	if hasPrefix(b, "\x7fELF") && isAppImage(path) {
 		return "appimage", nil
 	}
+	// A UDIF image is identified by its trailer, which the head switch cannot
+	// see: the data fork starts with whatever the first partition map is.
+	if isUDIF(path) {
+		return "dmg", nil
+	}
 	if isOVA(path, b) {
 		return "ova", nil
 	}
@@ -112,6 +118,33 @@ func detectDiskContainer(path string) (string, error) {
 		return "ovf", nil
 	}
 	return "", nil
+}
+
+// isUDIF reports whether the file ends with a well-formed koly trailer: the
+// UDIF magic, version 4, a 512-byte header, and a sector count whose disk fits
+// a 64-bit range. The extra fields keep a file that merely happens to end in
+// "koly" from being taken for a dmg.
+func isUDIF(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil || st.Size() < 1024 {
+		return false
+	}
+	var t [512]byte
+	if _, err := f.ReadAt(t[:], st.Size()-512); err != nil {
+		return false
+	}
+	if string(t[0:4]) != magicKoly || binary.BigEndian.Uint32(t[4:8]) != 4 ||
+		binary.BigEndian.Uint32(t[8:12]) != 512 {
+		return false
+	}
+	sectors := int64(binary.BigEndian.Uint64(t[492:500]))
+	xmlLength := int64(binary.BigEndian.Uint64(t[224:232]))
+	return sectors > 0 && sectors <= 1<<40 && xmlLength > 0 && xmlLength <= 64<<20
 }
 
 // isOVA reports whether path is a tar whose entries include an .ovf descriptor.
@@ -199,6 +232,12 @@ func detectRawFilesystem(path string) bool {
 	// ext2/3/4: superblock magic 0xEF53 at offset 1080.
 	var e [2]byte
 	if _, err := f.ReadAt(e[:], 1080); err == nil && binary.LittleEndian.Uint16(e[:]) == 0xEF53 {
+		return true
+	}
+
+	// HFS+ ("H+") or HFSX ("HX"): volume header 1024 bytes in.
+	var hf [2]byte
+	if _, err := f.ReadAt(hf[:], 1024); err == nil && (string(hf[:]) == "H+" || string(hf[:]) == "HX") {
 		return true
 	}
 

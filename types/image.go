@@ -66,6 +66,11 @@ type ImageMetadata struct {
 	// ManifestDigest is "sha256:…" of the raw image manifest when the format
 	// records one (OCI); empty for a classic docker save.
 	ManifestDigest string
+
+	// LayerFeatures records seekable-compression features detected by sniffing
+	// each layer's compressed tail ("estargz", "zstd-chunked"); empty for
+	// layers without such metadata or without a cheap random-access path.
+	LayerFeatures []string
 }
 
 // NonDistributableLayer reports whether layer i is a non-distributable

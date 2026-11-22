@@ -1,6 +1,7 @@
 package image
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -24,8 +25,10 @@ import (
 	"github.com/ejfkdev/udf/diskkit/filesystem/fat12"
 	"github.com/ejfkdev/udf/diskkit/filesystem/fat16"
 	"github.com/ejfkdev/udf/diskkit/filesystem/fat32"
+	"github.com/ejfkdev/udf/diskkit/filesystem/hfsplus"
 	"github.com/ejfkdev/udf/diskkit/filesystem/iso9660"
 	"github.com/ejfkdev/udf/diskkit/filesystem/squashfs"
+	"github.com/ejfkdev/udf/dmg"
 	"github.com/klauspost/compress/zstd"
 	qcow2reader "github.com/lima-vm/go-qcow2reader"
 	qcow2fmt "github.com/lima-vm/go-qcow2reader/image/qcow2"
@@ -50,10 +53,11 @@ import (
 )
 
 // IsDiskImage reports whether path is a virtual disk image (qcow2/vmdk/vhd/
-// vhdx/vdi/parallels/qed/qcow1/vma/sif/ova/ovf/ffu/wim/esd/swm/sparse) or a raw
-// filesystem image (ext4/xfs/squashfs/ISO9660/UDF/exFAT/EROFS/FAT). Detection
-// is content based (file magic), not by filename extension. Disk images are a
-// different input class from the tar/zip archives handled elsewhere.
+// vhdx/vdi/parallels/qed/qcow1/vma/sif/ova/ovf/ffu/dmg/wim/esd/swm/sparse) or a
+// raw filesystem image (ext4/xfs/squashfs/HFS+/ISO9660/UDF/exFAT/EROFS/FAT).
+// Detection is content based (file magic), not by filename extension. Disk
+// images are a different input class from the tar/zip archives handled
+// elsewhere.
 func IsDiskImage(path string) bool {
 	if c, err := detectDiskContainer(path); err == nil && c != "" {
 		return true
@@ -393,6 +397,28 @@ func openDisks(path string) ([]*diskBackend, func() error, error) {
 		}}, func() error { return f.Close() }, nil
 	case "qcow2":
 		return openQcow2Backend(path)
+	case "dmg":
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		st, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			return nil, nil, err
+		}
+		d, err := dmg.Open(f, st.Size())
+		if err != nil {
+			_ = f.Close()
+			return nil, nil, fmt.Errorf("open dmg %s: %w", path, err)
+		}
+		return []*diskBackend{{
+			ra:     d,
+			size:   d.Size(),
+			path:   path,
+			format: "dmg",
+			name:   filepath.Base(path),
+		}}, func() error { return f.Close() }, nil
 	default:
 		// A raw disk or a bare filesystem image: bytes are the device itself.
 		f, err := os.Open(path)
@@ -722,8 +748,13 @@ func discoverVolumes(be *diskBackend) ([]DiskVolume, int64, error) {
 		}
 	} else {
 		// No partition table: the filesystem (if any) covers the whole disk,
-		// or the disk is a bare Android super image.
-		regions = append(regions, region{name: "disk", kind: "disk", start: 0, size: d.Size, probe: true})
+		// the disk is a bare Android super image, or the disk uses an Apple
+		// Partition Map (old-style DMGs), which diskfs does not parse.
+		if aps := apmRegions(be); len(aps) > 0 {
+			regions = append(regions, aps...)
+		} else {
+			regions = append(regions, region{name: "disk", kind: "disk", start: 0, size: d.Size, probe: true})
+		}
 		regions = append(regions, superRegions(be, 0, "")...)
 	}
 
@@ -777,6 +808,57 @@ func superRegions(be io.ReaderAt, origin int64, prefix string) []region {
 		})
 	}
 	return out
+}
+
+// apmRegions returns the partitions of an Apple Partition Map at sector 1, if
+// that is what the disk holds. Map entries carry their data area's absolute
+// start sector and block count; driver, map and free entries are skipped, the
+// rest become probeable regions named p1..pN.
+func apmRegions(be io.ReaderAt) []region {
+	entries := 0
+	var out []region
+	n := 0
+	for block := int64(1); block <= 1024; block++ {
+		var b [512]byte
+		if _, err := be.ReadAt(b[:], block*512); err != nil {
+			return nil
+		}
+		if binary.BigEndian.Uint16(b[0:2]) != 0x504D { // "PM"
+			return out
+		}
+		if entries == 0 {
+			entries = int(binary.BigEndian.Uint32(b[4:8])) // pmMapBlkCnt
+			if entries < 1 || entries > 1024 {
+				return nil
+			}
+		}
+		start := int64(binary.BigEndian.Uint32(b[8:12]))
+		size := int64(binary.BigEndian.Uint32(b[12:16]))
+		typ := cString(b[48:80])
+		if size > 0 && !strings.HasPrefix(typ, "Apple_Driver") &&
+			typ != "Apple_partition_map" && typ != "Apple_Free" && typ != "Apple_Patches" {
+			n++
+			out = append(out, region{
+				name:  fmt.Sprintf("p%d", n),
+				kind:  "partition",
+				start: start * 512,
+				size:  size * 512,
+				probe: true,
+			})
+		}
+		if len(out) >= entries || n >= entries {
+			break
+		}
+	}
+	return out
+}
+
+// cString reads a NUL-padded fixed-width string field.
+func cString(b []byte) string {
+	if i := bytes.IndexByte(b, 0); i >= 0 {
+		b = b[:i]
+	}
+	return string(b)
 }
 
 // mbrExtendedStarts returns the absolute byte offsets of MBR extended
@@ -967,6 +1049,13 @@ func detectFilesystem(be io.ReaderAt, start, size, blocksize int64) string {
 	var e [2]byte
 	if _, err := be.ReadAt(e[:], start+1080); err == nil && binary.LittleEndian.Uint16(e[:]) == 0xEF53 {
 		return "ext4"
+	}
+
+	// HFS+ volume header sits 1024 bytes into the volume ("H+", or "HX" for
+	// the case-sensitive HFSX).
+	var hf [2]byte
+	if _, err := be.ReadAt(hf[:], start+1024); err == nil && (string(hf[:]) == "H+" || string(hf[:]) == "HX") {
+		return "hfsplus"
 	}
 
 	// ISO9660 primary volume descriptor magic sits at offset 32769.
@@ -1564,6 +1653,12 @@ func openVolumeReaderOn(be *diskBackend, vol DiskVolume, blocksize int64) (diskV
 		f, err := erofs.Open(ra, vol.Start)
 		if err != nil {
 			return nil, fmt.Errorf("open erofs volume %s: %w", vol.Name, err)
+		}
+		return f, nil
+	case "hfsplus":
+		f, err := hfsplus.Open(ra, vol.Start, vol.Size)
+		if err != nil {
+			return nil, fmt.Errorf("open hfsplus volume %s: %w", vol.Name, err)
 		}
 		return f, nil
 	case "exfat":

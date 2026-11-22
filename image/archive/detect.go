@@ -61,6 +61,8 @@ func Detect(path string) (string, error) {
 		return "xar", nil
 	case hasPrefix(b, rpmMagic):
 		return "rpm", nil
+	case hasPrefix(b, "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"): // COM structured storage: .msi/.msp, legacy Office
+		return "cfb", nil
 	case hasPrefix(b, "!<arch>\n"): // ar; deb/ipk has a debian-binary member first
 		if len(b) >= 24 && strings.TrimRight(string(b[8:24]), " /") == "debian-binary" {
 			return "deb", nil

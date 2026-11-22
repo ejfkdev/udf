@@ -81,7 +81,7 @@ func toXyzErr(err error) error {
 // ---- info ----
 
 type InfoArgs struct {
-	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
+	Archive    string `json:"archive" desc:"local path to the image archive or disk image on this machine (tar/tar.gz/tgz/zip/msi/dmg/qcow2/vmdk/vhd/vhdx/ova); no files are uploaded" required:"true" cli:"positional"`
 	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
 	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
 	Tag        string `json:"tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (the preferred spelling of -t/--repo-tag)"`
@@ -111,6 +111,10 @@ type ImageInfoResult struct {
 	// ManifestDigest is "sha256:…" of the raw image manifest when the format
 	// records one (OCI layouts and archives).
 	ManifestDigest string `json:"manifest_digest,omitempty"`
+	// Features lists the distinct layer features detected in the compressed
+	// bytes (estargz, zstd-chunked).
+	Features []string `json:"features,omitempty"`
+
 	// LayerMediaTypes lists the distinct layer media types the manifest names
 	// (OCI); a classic docker save records none.
 	LayerMediaTypes []string `json:"layer_media_types,omitempty"`
@@ -199,6 +203,7 @@ func infoImage(_ context.Context, in *InfoArgs) (any, error) {
 			resp.NonDistributableLayers++
 		}
 	}
+	resp.Features = distinctSorted(meta.LayerFeatures)
 	resp.LayerMediaTypes = distinctSorted(meta.LayerMediaTypes)
 	return resp, nil
 }
@@ -222,7 +227,7 @@ func distinctSorted(in []string) []string {
 // ---- ls ----
 
 type LsArgs struct {
-	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
+	Archive    string `json:"archive" desc:"local path to the image archive or disk image on this machine (tar/tar.gz/tgz/zip/msi/dmg/qcow2/vmdk/vhd/vhdx/ova); no files are uploaded" required:"true" cli:"positional"`
 	Path       string `json:"path" desc:"path inside the image; / lists disks/volumes, e.g. /vg1/root or /vg1/root/etc" default:"/" cli:"positional"`
 	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
 	ImageIndex int    `json:"image-index" desc:"select the image by its index in the manifest.json array, e.g. 3 (same as --index)" default:"-1" cli:"shorthand=i"`
@@ -262,7 +267,7 @@ func listImage(_ context.Context, in *LsArgs) ([]image.FileEntry, error) {
 // ---- cp ----
 
 type CpArgs struct {
-	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
+	Archive    string `json:"archive" desc:"local path to the image archive or disk image on this machine (tar/tar.gz/tgz/zip/msi/dmg/qcow2/vmdk/vhd/vhdx/ova); no files are uploaded" required:"true" cli:"positional"`
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
 	Dest       string `json:"dest" desc:"destination path on this machine" required:"true" cli:"positional"`
 	BufferSize int    `json:"buffer-size" desc:"copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
@@ -316,7 +321,7 @@ func copyEntry(_ context.Context, in *CpArgs) (*CpResult, error) {
 // ---- cat ----
 
 type CatArgs struct {
-	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/7z/rar/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
+	Archive    string `json:"archive" desc:"local path to the image archive or disk image on this machine (tar/tar.gz/tgz/zip/7z/rar/msi/dmg/qcow2/vmdk/vhd); no files are uploaded" required:"true" cli:"positional"`
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
 	BufferSize int    `json:"buffer-size" desc:"copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`
 	RepoTag    string `json:"repo-tag" desc:"select the image by tag: a full RepoTag, name:tag, a repository name or a bare tag, when unambiguous (same as --tag)" cli:"shorthand=t"`
@@ -383,7 +388,7 @@ func openImageFileReader(archive, source, repoTag string, imageIndex int, tag st
 // ---- xxd ----
 
 type XxdArgs struct {
-	Archive    string `json:"archive" desc:"local path to the image archive on this machine (tar/tar.gz/tgz/zip/7z/rar/qcow2/vmdk/vhd/vhdx/ova/vma); no files are uploaded" required:"true" cli:"positional"`
+	Archive    string `json:"archive" desc:"local path to the image archive or disk image on this machine (tar/tar.gz/tgz/zip/7z/rar/msi/dmg/qcow2/vmdk/vhd); no files are uploaded" required:"true" cli:"positional"`
 	Source     string `json:"source" desc:"path inside the image; for a disk image use /volume/path, e.g. /vg1/root/etc/passwd" required:"true" cli:"positional"`
 	Bytes      int    `json:"bytes" desc:"number of bytes to dump" default:"256" cli:"shorthand=n"`
 	Offset     int    `json:"offset" desc:"skip this many bytes from the start of the file before dumping" default:"0" cli:"shorthand=s"`
@@ -427,7 +432,7 @@ func xxdEntry(_ context.Context, in *XxdArgs) (string, error) {
 // ---- extract ----
 
 type ExtractArgs struct {
-	Archive    string `json:"archive" desc:"local path to an image archive or a disk image (qcow2/vmdk/vhd/vhdx/ova/vma) on this machine; may also be a glob pattern or a directory (top level scanned)" required:"true" cli:"positional"`
+	Archive    string `json:"archive" desc:"local path to an image archive or disk image (qcow2/vmdk/dmg/msi/...) on this machine; may also be a glob pattern or a directory (top level scanned)" required:"true" cli:"positional"`
 	Output     string `json:"output" desc:"output parent directory (default: beside each input archive)" cli:"shorthand=o"`
 	Force      bool   `json:"force" desc:"force writing into an existing non-empty target directory" cli:"shorthand=f"`
 	BufferSize int    `json:"buffer-size" desc:"copy buffer size in bytes" default:"1048576" cli:"shorthand=b"`

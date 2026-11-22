@@ -1,6 +1,6 @@
 module github.com/ejfkdev/udf
 
-go 1.26.2
+go 1.27.1
 
 require (
 	github.com/anchore/go-lzo v0.1.0
@@ -12,6 +12,7 @@ require (
 	github.com/dsoprea/go-exfat v0.0.0-20190906070738-5e932fbdb589
 	github.com/ejfkdev/xyz-go v0.3.2
 	github.com/elliotwutingfeng/asciiset v0.0.0-20260129054604-cfde2086bc57
+	github.com/go-compressions/lzfse v0.6.0
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.19.0
 	github.com/lima-vm/go-qcow2reader v0.7.1

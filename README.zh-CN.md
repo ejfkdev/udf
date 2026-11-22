@@ -40,11 +40,12 @@ English version: [README.md](./README.md)
 归档处理：
 
 - 将镜像归档解包为合并后的 `rootfs`；批量提取多个归档时按核并行，结果保持输入顺序
+- 可寻址层的快路径：eStargz 与 zstd:chunked 层从各自内嵌的表直接列目录，不碰 payload；`cat`/`cp` 只读取目标文件所在的压缩范围（210 MB 的 eStargz 层 ls 只读约 13 KB、约 10 ms；`info` 在 `features` 里标注这类层）
 - 大压缩归档（gzip 与 zstd，docker-save 镜像与普通 `tar.gz`/`.tar.zst` 包都算）的随机访问索引：首条命令用块感知 deflate 扫描器一趟建好索引（解压约 500 MB/s），同一趟里取出各层目录并记录每个成员的头字段，之后 `ls`/`cp`/`cat`/`extract` 不再重新解压——26 GB 升级包上从"每条命令 69 秒"变成"首次 61 秒，之后列目录 0.02 秒、提取 1.95 GB 成员 2.5 秒"
-- 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.tar.xz`、`.tar.bz2`、`.tar.zst`、`.tar.lz4`、`.zip`、`.7z`、`.rar`、`.cpio`（以及 `.cpio.gz`/`.cpio.xz`/`.cpio.zst`，如 initramfs）、`.asar`（Electron）、`.rpm`、`.deb`/`.ipk`、`.cab`（含 `.msi` 内嵌 cab）、`.nar`（Nix）、`.xar`/`.pkg`（macOS 安装器）（以及 `.ppkg` Windows 预配包，OPC/ZIP）
+- 外层归档格式：`.tar`、`.tar.gz`、`.tgz`、`.tar.xz`、`.tar.bz2`、`.tar.zst`、`.tar.lz4`、`.zip`、`.7z`、`.rar`、`.cpio`（以及 `.cpio.gz`/`.cpio.xz`/`.cpio.zst`，如 initramfs）、`.asar`（Electron）、`.rpm`、`.deb`/`.ipk`、`.msi`/`.msp`（COM/OLE 复合文件：列出存储树，内嵌 CAB 就地展开）、`.cab`、`.nar`（Nix）、`.xar`/`.pkg`（macOS 安装器，Payload/Scripts 的 cpio 内容就地展开）（以及 `.ppkg` Windows 预配包，OPC/ZIP）
 - 可执行文件封装格式：PyInstaller onefile（CArchive + PYZ，重建 `.pyc`）、py2exe（PE 资源、引导脚本 `PYTHONSCRIPT` 重建为 `.pyc`、附加在 exe 尾部的模块归档）、Nuitka onefile（尾部附加与内嵌载荷）、.NET single-file 应用（bundle v1/v2/v6，含 deflate）、ZIP 自解压 exe
 - 安卓与游戏容器：`boot.img`（v0–v4：内核、ramdisk、dtb，以及 ramdisk 里 cpio 的每个文件，含模拟器 `ramdisk.img` 这类 **legacy LZ4** 压缩的 ramdisk）、稀疏镜像（`img`，作为磁盘容器即时展开）、`super` 分区（动态分区——`system`、`product`、`vendor` 等——按 extent 映射读取，独立文件或 GPT 磁盘内均可）与 Unity AssetBundle（`UnityFS`：按节点解压——存储、LZ4/LZ4HC、LZMA——条目名与内容逐字节还原）；APK 内的二进制 Android XML（AXML）——`AndroidManifest.xml`、布局文件——与编译后的资源表 `resources.arsc` 都会解码为可读文本，资源名、配置与 `@package/name` 引用都能在同一张表里解析出名称
-- 虚拟磁盘镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM、ESD、SWM、FFU、raw/`.img`/`.ami`（含 MBR 与 GPT 分区磁盘）、OVA、OVF、VMA、SIF、AppImage、安卓稀疏镜像（ext4/xfs/btrfs/NTFS/squashfs/ISO9660/UDF/exFAT/EROFS/FAT，含 LVM2 逻辑卷与安卓动态分区）
+- 虚拟磁盘镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM、ESD、SWM、FFU、raw/`.img`/`.ami`（含 MBR、GPT 与 APM 分区磁盘）、OVA、OVF、VMA、SIF、AppImage、**DMG**（Apple UDIF：zlib/bzip2/xz/lzfse/ADC 分块压缩）、安卓稀疏镜像（ext4/xfs/btrfs/NTFS/squashfs/HFS+/ISO9660/UDF/exFAT/EROFS/FAT，含 LVM2 逻辑卷与安卓动态分区）
 - 支持常见镜像归档结构：平铺结构 `manifest.json + config.json + layers/...`、经典 `docker save` 结构 `<layer-id>/layer.tar`、OCI 镜像布局目录，以及单文件 OCI 镜像归档（`.oci.tar`，含 flatpak bundle）
 - 输入可以是单个归档、通配符模式或目录（只扫描一层）
 
@@ -220,7 +221,7 @@ go build -o udf .
 
 每个命令接收**一个输入表达式**作为归档：
 
-- 单个归档文件（`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`/PyInstaller/py2exe/Nuitka/.NET single-file 可执行文件、安卓 `boot.img`、Unity AssetBundle）或磁盘镜像（`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`、安卓稀疏 `img`）——`info`、`ls`、`cp` 要求此形式
+- 单个归档文件（`.tar`/`.tar.gz`/`.tgz`/`.zip`/`.7z`/`.rar`/`.cpio`/`.asar`/`.rpm`/`.msi`/PyInstaller/py2exe/Nuitka/.NET single-file 可执行文件、安卓 `boot.img`、Unity AssetBundle）或磁盘镜像（`.qcow2`/`.vmdk`/`.vhd`/`.vhdx`/`.vdi`/`.img`/`.raw`/`.dd`/`.ova`/`.vma`/`.dmg`、安卓稀疏 `img`）——`info`、`ls`、`cp` 要求此形式
 - 通配符模式或目录（只扫描一层，不递归）——`extract` 额外支持，并展开为批量处理
 
 示例：
@@ -531,9 +532,9 @@ func main() {
 
 当前支持：
 
-- 归档解包（tar、tar.gz/tgz、tar.xz、tar.bz2、tar.zst、tar.lz4、zip、7z、rar、cpio、cpio.gz/xz/zst、asar、rpm、deb/ipk、cab、nar、xar/pkg、pyinstaller、py2exe、nuitka、.NET single-file、zip 自解压、OCI 布局、OCI 归档/flatpak、`docker save`、安卓 boot.img、Unity AssetBundle），目录 / 通配符批量
-- 磁盘 / 虚拟机镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM/ESD/SWM、FFU、VMA、SIF、OVA/OVF、raw/`.img`/`.ami`、安卓稀疏 `img`
-- 文件系统（整块磁盘、分区或 LVM2 逻辑卷）：ext2/3/4、xfs、btrfs、NTFS、squashfs、ISO9660、UDF、exFAT、EROFS（未压缩）、FAT12/16/32
+- 归档解包（tar、tar.gz/tgz、tar.xz、tar.bz2、tar.zst、tar.lz4、zip、7z、rar、cpio、cpio.gz/xz/zst、asar、rpm、deb/ipk、msi/msp（内嵌 CAB 就地展开）、cab、nar、xar/pkg（Payload 内容就地展开）、pyinstaller、py2exe、nuitka、.NET single-file、zip 自解压、OCI 布局、OCI 归档/flatpak、`docker save`、安卓 boot.img、Unity AssetBundle），目录 / 通配符批量
+- 磁盘 / 虚拟机镜像：qcow2、QCOW v1、VMDK、VHD/VHDX、VDI、QED、Parallels、WIM/ESD/SWM、FFU、VMA、SIF、OVA/OVF、raw/`.img`/`.ami`、**DMG**（UDIF）、安卓稀疏 `img`
+- 文件系统（整块磁盘、分区或 LVM2 逻辑卷）：ext2/3/4、xfs、btrfs、NTFS、squashfs、HFS+/HFSX（macOS，DMG 卷即它）、ISO9660、UDF、exFAT、EROFS（未压缩）、FAT12/16/32
 - 不解压列出内容（`ls`）、单独提取（`cp`）、元数据（`info`）、单文件读 stdout（`cat`）、十六进制文件头（`xxd`）、整包解压（`extract`）
 - 一个二进制、三种接口：CLI、HTTP（REST + OpenAPI）、MCP 工具
 - `config.yaml` 导出

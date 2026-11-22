@@ -91,6 +91,7 @@ func scanImageMetadataIndexed(imageTarPath string, r indexedOuter, sel Selection
 	if err != nil {
 		return nil, err
 	}
+	meta.LayerFeatures = sniffLayerFeatures(imageTarPath, meta.LayerOrder)
 	if size, ok := storedSizeOf(imageTarPath, item.Layers); ok {
 		meta.StoredSize = size
 	}
@@ -136,6 +137,7 @@ func scanImageMetadataSequential(imageTarPath string, sel Selection) (*types.Ima
 	if err != nil {
 		return nil, err
 	}
+	meta.LayerFeatures = sniffLayerFeatures(imageTarPath, meta.LayerOrder)
 	if size, ok := storedSizeOf(imageTarPath, item.Layers); ok {
 		meta.StoredSize = size
 	}

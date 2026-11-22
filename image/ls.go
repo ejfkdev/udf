@@ -28,6 +28,13 @@ const maxBufferedLayerHeaders = 300000
 // per layer. When the archive supports sequential reading, every layer is
 // instead parsed in a single pass and merged afterwards.
 func BuildFileSystem(imageTarPath string, meta *types.ImageMetadata) (*fsview.Node, error) {
+	// Seekable-compression layers (eStargz, zstd:chunked) expose their
+	// directory from the TOC alone: no payload is decompressed, whatever the
+	// image size. Any failure falls through to the streaming paths.
+	if tree, ok := featureLayerDirectories(imageTarPath, meta); ok {
+		return tree, nil
+	}
+
 	archive, err := arch.Open(imageTarPath)
 	if err != nil {
 		return nil, err

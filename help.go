@@ -47,6 +47,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 			{"udf ls --platform linux/arm64 ./multi.tar", "多平台镜像：按平台选择"},
 			{"udf ls ./app.exe", "py2exe：PE 资源（PYTHONSCRIPT 为 .pyc）+ 附加模块归档"},
 			{"udf ls ./disk.qcow2", "磁盘镜像：列出分区/逻辑卷"},
+			{"udf ls ./app.dmg", "DMG：解 UDIF 分块后列出 HFS+ 卷内目录"},
+			{"udf ls ./setup.msi", "MSI：安装器表 + 内嵌 CAB 成员就地列出"},
 			{"udf cp ./disk.qcow2 /p1/etc/hostname .", "从磁盘镜像提取单个文件"},
 			{"udf ./image.tar -o ./out", "解包整镜像（extract 为默认命令）"},
 			{"udf serve --addr 127.0.0.1:8080", "启动 HTTP REST 服务"},
@@ -54,7 +56,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 		},
 		formats: `支持的输入（按文件内容识别，不靠扩展名）:
   归档:     tar / tar.gz(tgz) / tar.xz / tar.bz2 / tar.zst / tar.lz4 / zip / 7z / rar /
-            cpio(cpio.gz/xz/zst，含 initramfs) / asar / rpm / deb(ipk) / cab（含 .msi 内嵌）/ nar(nix) / xar(.pkg) / .ppkg，以及 OCI 布局 / OCI 归档(.oci.tar，含 flatpak) / docker save
+            cpio(cpio.gz/xz/zst，含 initramfs) / asar / rpm / deb(ipk) / msi(COM/OLE 复合文件，内嵌 CAB 就地展开) /
+            cab / nar(nix) / xar(.pkg，Payload/Scripts 的 cpio 内容就地展开) / .ppkg，以及 OCI 布局 / OCI 归档(.oci.tar，含 flatpak) / docker save
   可执行封装: pyinstaller(onefile，含 PYZ，重建 .pyc) / py2exe(PYTHONSCRIPT 解码为 .pyc，附加模块 zip 列出) /
             nuitka onefile(附加与内嵌载荷) / .NET single-file(bundle v1/v2/v6，含 deflate) / zip 自解压 exe
   安卓:     boot.img(v0-v4：内核/ramdisk/dtb 及 ramdisk 内 cpio 文件，含 legacy LZ4 压缩的 ramdisk) /
@@ -62,8 +65,10 @@ var helpTextsByLang = map[langx.Language]helpTexts{
             resources.arsc(资源表解码，名称与引用可读)；APK 内二进制 AXML 自动解码为文本 XML
   游戏资源: Unity AssetBundle(UnityFS：按节点解压 none/LZ4/LZMA；LZHAM 与加密会明确报不支持)
   虚拟磁盘: qcow2 / qcow1 / vmdk / vhd(vhdx) / vdi / qed / parallels / vma / ova(ovf) / sif / ffu /
-            wim(esd/swm) / raw(img，含 GPT/MBR 分区磁盘) / ami / appimage / 安卓 sparse img 与 super 动态分区
-  文件系统: ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs(未压缩) / fat12/16/32，含 LVM2 逻辑卷`,
+            dmg(UDIF：zlib/bzip2/xz/lzfse/ADC 分块) / wim(esd/swm) / raw(img，含 GPT/MBR/APM 分区磁盘) /
+            ami / appimage / 安卓 sparse img 与 super 动态分区
+  文件系统: ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs(未压缩) /
+            hfsplus(macOS，HFS+/HFSX) / fat12/16/32，含 LVM2 逻辑卷`,
 		options: `内置选项:
   -h, --help         显示帮助（总览或当前子命令）
   -v, --version      显示版本号
@@ -100,6 +105,8 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 			{"udf ls --platform linux/arm64 ./multi.tar", "several platforms: pick one by platform"},
 			{"udf ls ./app.exe", "py2exe: PE resources (PYTHONSCRIPT as .pyc) + appended module archive"},
 			{"udf ls ./disk.qcow2", "disk image: list partitions / logical volumes"},
+			{"udf ls ./app.dmg", "DMG: decode the UDIF chunks and list the HFS+ volume"},
+			{"udf ls ./setup.msi", "MSI: installer tables plus embedded CAB members in place"},
 			{"udf cp ./disk.qcow2 /p1/etc/hostname .", "extract a single file from a disk image"},
 			{"udf ./image.tar -o ./out", "extract the whole image (extract is the default command)"},
 			{"udf serve --addr 127.0.0.1:8080", "start the HTTP REST service"},
@@ -107,7 +114,9 @@ var helpTextsByLang = map[langx.Language]helpTexts{
 		},
 		formats: `Supported inputs (detected by content, not extension):
   archives:      tar / tar.gz (tgz) / tar.xz / tar.bz2 / tar.zst / tar.lz4 / zip / 7z / rar /
-                 cpio (cpio.gz/xz/zst, incl. initramfs) / asar / rpm / deb (ipk) / cab (incl. cabs inside .msi) / nar (nix) / xar (.pkg) / .ppkg, plus OCI layouts, oci-archive tars (incl. flatpak) and docker save dirs
+                 cpio (cpio.gz/xz/zst, incl. initramfs) / asar / rpm / deb (ipk) / msi (COM/OLE compound files,
+                 embedded CABs expanded in place) / cab / nar (nix) / xar (.pkg, Payload/Scripts cpio contents expanded in place) / .ppkg, plus OCI layouts,
+                 oci-archive tars (incl. flatpak) and docker save dirs
   exe bundles:   pyinstaller (onefile, incl. PYZ, rebuilds .pyc) / py2exe (PYTHONSCRIPT decoded to .pyc,
                  appended module archive listed) / nuitka onefile (appended and embedded payloads) /
                  .NET single-file (bundle v1/v2/v6, incl. deflate) / zip self-extracting exes
@@ -116,9 +125,10 @@ var helpTextsByLang = map[langx.Language]helpTexts{
                  standalone or inside a GPT disk) / resources.arsc (resource table decoded, names and references readable)
   game assets:   Unity AssetBundles (UnityFS: per-node decompression, none/LZ4/LZMA; LZHAM and encryption are reported unsupported)
   disk images:   qcow2 / qcow1 / vmdk / vhd (vhdx) / vdi / qed / parallels / vma / ova (ovf) / sif / ffu /
-                 wim (esd/swm) / raw (img, incl. GPT/MBR-partitioned disks) / ami / appimage / Android sparse img and super partitions
-  filesystems:   ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs (uncompressed) / fat12/16/32,
-                 incl. LVM2 logical volumes`,
+                 dmg (UDIF: zlib/bzip2/xz/lzfse/ADC chunks) / wim (esd/swm) / raw (img, incl. GPT/MBR/APM-partitioned disks) /
+                 ami / appimage / Android sparse img and super partitions
+  filesystems:   ext2/3/4 / xfs / btrfs / ntfs / squashfs / iso9660 / udf / exfat / erofs (uncompressed) /
+                 hfsplus (macOS, HFS+/HFSX) / fat12/16/32, incl. LVM2 logical volumes`,
 		options: `Built-in options:
   -h, --help         show help (overview or per-command)
   -v, --version      show version

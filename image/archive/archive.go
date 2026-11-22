@@ -68,6 +68,8 @@ func Open(path string) (Archive, error) {
 		return openTar(path, "lz4")
 	case "deb":
 		return &debArchive{path: path}, nil
+	case "cfb":
+		return openMSI(path)
 	case "zip":
 		// .ppkg (Windows provisioning package) is an OPC container: a ZIP.
 		return &zipArchive{path: path}, nil
