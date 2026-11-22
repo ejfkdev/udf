@@ -160,7 +160,8 @@ fabric.properties
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
+
 
 # Thumbnails
 ._*
@@ -230,6 +231,8 @@ $RECYCLE.BIN/
 *.msix
 *.msm
 *.msp
+# ...except the committed test fixture
+!image/archive/testdata/test.msi
 
 # Windows shortcuts
 *.lnk
